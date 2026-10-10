@@ -9,8 +9,11 @@ It does not include the commercial Crest URP package.
 - Project target: **Unity 6000.6.0f1 / URP 17.6.0**.
 - Renderer: **Universal Renderer with Render Graph enabled**, initially Forward,
   Linear color, MSAA off, render scale 1.0. The 2D Renderer is not supported.
-- **Unity import, C# API binding, shader compilation, player builds and GPU/device
-  validation have not been run.** No Unity Hub login or license activation was attempted.
+- **Headless Unity import, C# API binding, pipeline creation and validation passed locally
+  on Unity 6000.6.2f1 / URP 17.6.0.** The editor automatically migrated older package
+  dependencies in the validation copy; see [static-check-results.md](static-check-results.md).
+- Shader variant compilation, player builds and GPU/device validation have not been
+  run. The exact Unity 6000.6.0f1 editor target has not been tested.
 - This branch is ready for local compilation and visual review, not a declaration
   of tested visual equivalence or production readiness.
 

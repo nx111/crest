@@ -1,5 +1,5 @@
 > **urp branch — Unity 6000.6 / URP 17.6**
-> Independent source port using Render Graph. Unity compilation and GPU validation are pending locally.
+> Independent source port using Render Graph. Headless Unity import and C# compilation passed locally on Unity 6000.6.2f1; GPU validation is pending.
 > Start with [setup and local verification checklist](docs/URP-MIGRATION.md).
 
 <div align="center">
