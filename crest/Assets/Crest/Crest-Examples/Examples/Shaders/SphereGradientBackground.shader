@@ -12,22 +12,22 @@ Shader "Hidden/Crest/SphereGradientBackground"
 	}
 	SubShader
 	{
-		Tags { "RenderType"="Opaque" "LightMode"="ForwardBase" }
+		Tags { "RenderPipeline"="UniversalPipeline" "RenderType"="Opaque" "Queue"="Background" }
 		LOD 100
 
 		Pass
 		{
+			Tags { "LightMode"="UniversalForwardOnly" }
 			Cull Front
 			Blend Off
+			ZWrite Off
 
-			CGPROGRAM
+			HLSLPROGRAM
 			#pragma vertex vert
 			#pragma fragment frag
 
-			#include "UnityCG.cginc"
-			#include "Lighting.cginc"
-
-			#include "../../../Crest/Shaders/Helpers/BIRP/Core.hlsl"
+			#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+			#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
 			struct Attributes
 			{
@@ -49,27 +49,29 @@ Shader "Hidden/Crest/SphereGradientBackground"
 				UNITY_SETUP_INSTANCE_ID(v);
 				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
-				o.vertex = UnityObjectToClipPos(v.vertex);
-				o.positionWS = mul(unity_ObjectToWorld, float4(v.vertex.xyz, 1.0));
+				o.vertex = TransformObjectToHClip(v.vertex.xyz);
+				o.positionWS = TransformObjectToWorld(v.vertex.xyz);
 				return o;
 			}
 
-			float3 _ColorTowardsSun;
-			float3 _ColorAwayFromSun;
-			float _Exponent;
+			CBUFFER_START(UnityPerMaterial)
+				float3 _ColorTowardsSun;
+				float3 _ColorAwayFromSun;
+				float _Exponent;
+			CBUFFER_END
 
 			float4 frag (Varyings i) : SV_Target
 			{
-				float3 worldPosition = i.positionWS;
 				float3 viewDirection = normalize(i.positionWS - _WorldSpaceCameraPos);
+				Light light = GetMainLight();
 
-				float alpha = saturate(0.5 * dot(viewDirection, _WorldSpaceLightPos0.xyz) + 0.5);
+				float alpha = saturate(0.5 * dot(viewDirection, light.direction) + 0.5);
 				alpha = pow(alpha, _Exponent);
 
 				float3 col = lerp(_ColorAwayFromSun, _ColorTowardsSun, alpha);
-				return float4(col * saturate(max(_LightColor0.r, max(_LightColor0.g, _LightColor0.b))), 1.0);
+				return float4(col * saturate(max(light.color.r, max(light.color.g, light.color.b))), 1.0);
 			}
-			ENDCG
+			ENDHLSL
 		}
 	}
 }

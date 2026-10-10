@@ -3,6 +3,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
+using UnityEditor.Rendering;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -12,6 +13,100 @@ namespace Crest
     public static class CrestURPSetup
     {
         const string Folder = "Assets/CrestURPSettings";
+        const string Examples = "Assets/Crest/Crest-Examples";
+
+        [MenuItem("Crest/URP/Convert Example Assets")]
+        public static void ConvertExamples()
+        {
+            CreatePipeline();
+            var pipeline = (UniversalRenderPipelineAsset)GraphicsSettings.defaultRenderPipeline;
+            pipeline.shadowDistance = QualitySettings.shadowDistance;
+            pipeline.shadowCascadeCount = Mathf.Max(1, QualitySettings.shadowCascades);
+            var serializedPipeline = new SerializedObject(pipeline);
+            serializedPipeline.FindProperty("m_OpaqueDownsampling").intValue = (int)Downsampling.None;
+            serializedPipeline.ApplyModifiedPropertiesWithoutUndo();
+
+            var upgraders = MaterialUpgrader.FetchAllUpgradersForPipeline(typeof(UniversalRenderPipelineAsset));
+            var convertedMaterials = 0;
+            foreach (var guid in AssetDatabase.FindAssets("t:Material", new[] { Examples }))
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!path.EndsWith(".mat")) continue;
+                var material = AssetDatabase.LoadAssetAtPath<Material>(path);
+                var shader = material.shader.name;
+                if (shader != "Standard" && shader != "Standard (Specular setup)" &&
+                    !shader.StartsWith("Nature/Terrain/") && !shader.StartsWith("Particles/")) continue;
+                var message = string.Empty;
+                if (!MaterialUpgrader.Upgrade(material, upgraders,
+                    MaterialUpgrader.UpgradeFlags.LogMessageWhenNoUpgraderFound, ref message))
+                    throw new BuildFailedException(path + ": " + message);
+                EditorUtility.SetDirty(material);
+                convertedMaterials++;
+            }
+
+            var convertedPrefabs = 0;
+            foreach (var guid in AssetDatabase.FindAssets("t:Prefab", new[] { Examples }))
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!path.EndsWith(".prefab")) continue;
+                var root = PrefabUtility.LoadPrefabContents(path);
+                try
+                {
+                    var changed = false;
+                    foreach (var renderer in root.GetComponentsInChildren<Renderer>(true))
+                    {
+                        if (PrefabUtility.IsPartOfPrefabInstance(renderer)) continue;
+                        var materials = renderer.sharedMaterials;
+                        var replaced = false;
+                        for (var i = 0; i < materials.Length; i++)
+                        {
+                            var replacement = ConvertBuiltinMaterial(materials[i], pipeline);
+                            if (replacement == materials[i]) continue;
+                            materials[i] = replacement;
+                            replaced = true;
+                        }
+                        if (!replaced) continue;
+                        renderer.sharedMaterials = materials;
+                        changed = true;
+                    }
+                    if (root.TryGetComponent<Camera>(out var camera) && !PrefabUtility.IsPartOfPrefabInstance(camera))
+                    {
+                        changed |= !camera.TryGetComponent<UniversalAdditionalCameraData>(out _);
+                        camera.GetUniversalAdditionalCameraData();
+                        changed |= camera.forceIntoRenderTexture || camera.allowMSAA;
+                        camera.forceIntoRenderTexture = false;
+                        camera.allowMSAA = false;
+                    }
+                    if (!changed) continue;
+                    PrefabUtility.SaveAsPrefabAsset(root, path);
+                    convertedPrefabs++;
+                }
+                finally { PrefabUtility.UnloadPrefabContents(root); }
+            }
+            GraphicsSettings.lightsUseLinearIntensity = true;
+            EditorUtility.SetDirty(pipeline);
+            AssetDatabase.SaveAssets();
+            ValidatePipeline();
+            Debug.Log($"Crest URP examples converted: {convertedMaterials} materials, {convertedPrefabs} prefabs.");
+        }
+
+        static Material ConvertBuiltinMaterial(Material material, UniversalRenderPipelineAsset pipeline)
+        {
+            if (material == null) return null;
+            var path = AssetDatabase.GetAssetPath(material);
+            if (path.StartsWith("Assets/") || path.StartsWith("Packages/")) return material;
+            switch (material.name)
+            {
+                case "Default-Diffuse":
+                case "Default-Material": return pipeline.defaultMaterial;
+                case "Default-ParticleSystem":
+                case "Default-Particle": return pipeline.defaultParticleMaterial;
+                case "Default-Terrain-Diffuse":
+                case "Default-Terrain-Specular":
+                case "Default-Terrain-Standard": return pipeline.defaultTerrainMaterial;
+                default: return material;
+            }
+        }
 
         [MenuItem("Crest/URP/Create and Assign Pipeline")]
         public static void CreatePipeline()
