@@ -13,6 +13,7 @@ namespace Crest
         public static event System.Action<CommandBuffer, Camera, RenderTextureDescriptor> BeforeSceneRendering;
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         static void ResetEvents() => BeforeSceneRendering = null;
+        static readonly int s_MainLightShadowCascadeCount = Shader.PropertyToID("_CrestMainLightShadowCascadeCount");
         CrestPass _prepare, _before, _after;
 
         public override void Create()
@@ -46,6 +47,7 @@ namespace Crest
                 public Camera camera;
                 public UnderwaterRenderer underwater;
                 public RenderTextureDescriptor descriptor;
+                public int shadowCascadeCount;
                 public Matrix4x4 view, projection;
                 public TextureHandle color, depth, copy, opaque;
                 public bool effect;
@@ -66,6 +68,7 @@ namespace Crest
             {
                 var resources = frameData.Get<UniversalResourceData>();
                 var cameraData = frameData.Get<UniversalCameraData>();
+                var shadowData = frameData.Get<UniversalShadowData>();
                 var underwater = UnderwaterRenderer.Get(cameraData.camera);
                 if (underwater != null && !underwater.isActiveAndEnabled) underwater = null;
                 if (underwater != null && !Helpers.MaskIncludesLayer(cameraData.camera.cullingMask, underwater._layer)) underwater = null;
@@ -88,6 +91,7 @@ namespace Crest
                     data.camera = cameraData.camera;
                     data.underwater = underwater;
                     data.descriptor = descriptor;
+                    data.shadowCascadeCount = shadowData.mainLightShadowCascadesCount;
                     data.view = cameraData.GetViewMatrix();
                     data.projection = GL.GetGPUProjectionMatrix(cameraData.GetProjectionMatrix(),
                         !resources.isActiveTargetBackBuffer || cameraData.targetTexture != null);
@@ -114,8 +118,11 @@ namespace Crest
                     builder.SetRenderFunc((PassData pass, UnsafeGraphContext context) =>
                     {
                         var cmd = CommandBufferHelpers.GetNativeCommandBuffer(context.cmd);
+                        cmd.SetGlobalInt(s_MainLightShadowCascadeCount, pass.shadowCascadeCount);
                         if (pass.stage == 0)
                         {
+                            // Resolve waterline handling per rendered camera, after URP's MSAA fallbacks.
+                            cmd.SetGlobalInt(OceanRenderer.sp_CrestDepthTextureOffset, pass.descriptor.msaaSamples > 1 ? 1 : 0);
                             cmd.DisableShaderKeyword("CREST_WATER_VOLUME_2D");
                             cmd.DisableShaderKeyword("CREST_WATER_VOLUME_HAS_BACKFACE");
                             cmd.DisableShaderKeyword("CREST_UNDERWATER_BEFORE_TRANSPARENT");

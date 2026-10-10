@@ -142,7 +142,7 @@ void ApplyCaustics
 			// handled for the transparent pass.
 			// Null texture is a small white texture which will be smaller than the screen size.
 			#if defined(CREST_URP)
-            causticsStrength *= MainLightRealtimeShadow(TransformWorldToShadowCoord(i_scenePos));
+            causticsStrength *= CrestMainLightShadow(i_scenePos);
 #else
             causticsStrength *= LOAD_TEXTURE2D_X(_CrestScreenSpaceShadowTexture,  min(i_positionSS, (int2)_CrestScreenSpaceShadowTexture_TexelSize.zw - 1)).r;
 #endif
@@ -251,7 +251,12 @@ half3 OceanEmission
 		if (caustics)
 #endif
 		{
+#if defined(CREST_URP)
+			// The inverse view matrix's third column points backwards (view-space +Z).
+			float3 scenePos = _WorldSpaceCameraPos - i_view * sceneZ / dot(UNITY_MATRIX_I_V._13_23_33, i_view);
+#else
 			float3 scenePos = _WorldSpaceCameraPos - i_view * sceneZ / dot(unity_CameraToWorld._m02_m12_m22, -i_view);
+#endif
 			ApplyCaustics(_CausticsTiledTexture, _CausticsDistortionTiledTexture, uvBackgroundRefract * _ScreenParams.xy, scenePos, i_lightDir, sceneZ, i_underwater, sceneColour, _LD_SliceIndex + 1, cascadeData1);
 		}
 #endif

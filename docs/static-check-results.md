@@ -66,3 +66,35 @@ assets are included in the example project and assigned in Graphics and all qual
 levels. Converted example materials retain their asset GUIDs. Built-in default
 material references in boat prefabs use URP materials; the shared base camera includes
 URP camera data with MSAA disabled.
+
+## Targeted shading regressions
+
+Base for these fixes: `175fe207d111f8a4a91386b2aa0a1e4e8987f8a3` on `urp`.
+The earlier Unity/D3D11 results above predate these changes.
+
+| Check | Result |
+| --- | --- |
+| `python tools/check_urp_regressions.py -v` | **9 tests passed**: reconstruction, per-camera MSAA, shadow variants/coordinates and probe-blending data flow |
+| Numerical reconstruction | **243 points passed** across the ocean, underwater effect and Curtain expressions; identity/rotated cameras, off-axis rays and large world offsets |
+| Numerical atlas coordinates | Single shadow, 1/2/3/4-cascade screen-shadow queries, cascade keywords before Crest globals initialize, and out-of-cascade sentinel checked |
+| `python tools/check_urp.py` | **0 errors**; 99 shader/HLSL/compute files, 184 local includes, 6 assembly definitions and 12 new asset metadata entries |
+| Existing C# 9 syntax checker | **0 errors**; 145 files × 4 Unity Editor/Player define configurations |
+| Whitespace | `git diff --check`: passed |
+| Unity 6 import/API binding, HLSL compilation, rendering and player variants for these fixes | **Not run**; complete the focused [local review items](URP-MIGRATION.md#本地复核清单) |
+
+The new numerical regression fails against the base source: the central view ray
+at eye depth `0.4` reconstructs to `-0.4` behind the camera. The fixed expression
+reconstructs to `+0.4` in front of it. MSAA, shadow-variant and probe-blending source
+checks also reject the base revision. This is regression evidence, not a GPU result.
+
+The current cloud environment has Unity 2022.3's standalone .NET 6/Roslyn tools,
+but no .NET 10 SDK or the target Unity 6 editor. The existing C# checker was built
+and run with those standalone tools without starting Unity or waiting for Hub login.
+Syntax parsing does not bind Unity assemblies.
+
+The shadow sampling signature, screen/transparent coordinate routing, probe
+reflection overload and `UniversalShadowData.mainLightShadowCascadesCount` were
+reviewed against official URP 17.6 source at
+[`a7e4c051`](https://github.com/Unity-Technologies/Graphics/tree/a7e4c051d256a781ab362c64316b125a1e104694/Packages/com.unity.render-pipelines.universal).
+World-space caustics and shadow accumulation read the already declared main-light
+atlas directly; they do not depend on the later screen-space shadow texture.

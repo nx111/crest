@@ -44,7 +44,11 @@ Shader "Crest/Examples/Masked"
             data.positionWS = i.positionWS;
             data.normalWS = normalize(i.normalWS);
             data.viewDirectionWS = GetWorldSpaceNormalizeViewDir(i.positionWS);
+            #if defined(_MAIN_LIGHT_SHADOWS_SCREEN)
+            data.shadowCoord = i.screenPos;
+            #else
             data.shadowCoord = TransformWorldToShadowCoord(i.positionWS);
+            #endif
             data.bakedGI = SampleSH(data.normalWS);
             data.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(i.positionCS);
             data.shadowMask = half4(1,1,1,1);
@@ -124,8 +128,9 @@ Shader "Crest/Examples/Masked"
             #pragma vertex Vert
             #pragma fragment Frag
             #pragma multi_compile_fog
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
-            #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
+            #pragma multi_compile_fragment _ _REFLECTION_PROBE_BLENDING
             ENDHLSL
         }
         Pass

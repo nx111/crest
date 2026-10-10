@@ -22,12 +22,14 @@ Shader "Crest/Examples/UnderwaterTransparentSurfaceShader"
             #pragma vertex Vert
             #pragma fragment Frag
             #pragma multi_compile_fog
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
-            #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
+            #pragma multi_compile_fragment _ _REFLECTION_PROBE_BLENDING
             #pragma multi_compile _ CREST_WATER_VOLUME_2D CREST_WATER_VOLUME_HAS_BACKFACE
             #pragma multi_compile _ CREST_SUBSURFACESCATTERING_ON
             #pragma multi_compile _ CREST_SHADOWS_ON
 
+        #define _SURFACE_TYPE_TRANSPARENT 1
         #include "../../../Crest/Shaders/Helpers/URP/Core.hlsl"
         struct Attributes { float3 positionOS : POSITION; float3 normalOS : NORMAL; float2 uv : TEXCOORD0; UNITY_VERTEX_INPUT_INSTANCE_ID };
         struct Varyings { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float3 normalWS : TEXCOORD1; float2 uv : TEXCOORD2; float4 screenPos : TEXCOORD3; float fog : TEXCOORD4; UNITY_VERTEX_OUTPUT_STEREO };
@@ -50,7 +52,7 @@ Shader "Crest/Examples/UnderwaterTransparentSurfaceShader"
             data.positionWS = i.positionWS;
             data.normalWS = normalize(i.normalWS);
             data.viewDirectionWS = GetWorldSpaceNormalizeViewDir(i.positionWS);
-            data.shadowCoord = TransformWorldToShadowCoord(i.positionWS);
+            data.shadowCoord = CrestWorldToMainLightShadowCoord(i.positionWS);
             data.bakedGI = SampleSH(data.normalWS);
             data.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(i.positionCS);
             data.shadowMask = half4(1,1,1,1);

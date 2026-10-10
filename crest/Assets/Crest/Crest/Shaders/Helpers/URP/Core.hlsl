@@ -17,8 +17,33 @@
 #define UNITY_DECLARE_SCREENSPACE_TEXTURE(name) TEXTURE2D_X(name); SAMPLER(sampler##name);
 #define UNITY_SAMPLE_SCREENSPACE_TEXTURE(name, uv) SAMPLE_TEXTURE2D_X(name, sampler##name, UnityStereoTransformScreenSpaceTex(uv))
 #define _LightColor0 _MainLightColor.rgb
-#define unity_CameraToWorld UNITY_MATRIX_I_V
 #define _ScreenSize float4(_ScaledScreenParams.xy, rcp(_ScaledScreenParams.xy))
+
+// World-space queries also run before URP's screen-space shadow texture exists.
+// Its screen keyword hides the cascade keyword, so use the camera's actual count.
+int _CrestMainLightShadowCascadeCount;
+
+float4 CrestWorldToMainLightShadowCoord(float3 positionWS)
+{
+    half cascadeIndex = 0;
+#if defined(_MAIN_LIGHT_SHADOWS_CASCADE)
+    cascadeIndex = ComputeCascadeIndex(positionWS);
+#elif defined(_MAIN_LIGHT_SHADOWS_SCREEN)
+    if (_CrestMainLightShadowCascadeCount > 1)
+        cascadeIndex = ComputeCascadeIndex(positionWS);
+#endif
+    return float4(mul(_MainLightWorldToShadow[cascadeIndex], float4(positionWS, 1.0)).xyz, 0.0);
+}
+
+half CrestMainLightShadow(float3 positionWS)
+{
+#if defined(MAIN_LIGHT_CALCULATE_SHADOWS)
+    return SampleShadowmap(TEXTURE2D_ARGS(_MainLightShadowmapTexture, sampler_LinearClampCompare),
+        CrestWorldToMainLightShadowCoord(positionWS), GetMainLightShadowSamplingData(), GetMainLightShadowParams(), false);
+#else
+    return 1.0h;
+#endif
+}
 
 float4 UnityObjectToClipPos(float3 positionOS) { return TransformObjectToHClip(positionOS); }
 float4 UnityObjectToClipPos(float4 positionOS) { return TransformObjectToHClip(positionOS.xyz); }

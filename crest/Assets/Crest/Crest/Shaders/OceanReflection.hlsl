@@ -44,6 +44,7 @@ void ApplyReflectionSky
 (
 	in const half3 i_view,
 	in const half3 i_n_pixel,
+	in const float3 i_positionWS,
 	in const half3 i_lightDir,
 	in const half i_shadow,
 	in const half4 i_screenPos,
@@ -72,7 +73,7 @@ void ApplyReflectionSky
 	skyColour = val.rgb;
 #else
 #if defined(CREST_URP)
-    skyColour = GlossyEnvironmentReflection(refl, _Roughness, 1.0h);
+    skyColour = GlossyEnvironmentReflection(refl, i_positionWS, _Roughness, 1.0h, i_screenPos.xy / i_screenPos.w);
 #else
 	Unity_GlossyEnvironmentData envData;
 	envData.roughness = _Roughness;

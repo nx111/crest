@@ -71,6 +71,21 @@ they do not require the built-in camera lighting or GrabPass pipeline.
 
 ## 本地复核清单
 
+本次焦散坐标、相机 MSAA、阴影变体和反射探针混合修复已通过静态／数值回归，
+尚未在 Unity 6000.6.2f1 中重新编译或渲染。前述 D3D11 结果属于修复前的提交。
+本次优先复核以下项目：
+
+- [ ] **焦散位置**：浅水池底放置可辨识物体，分别从水上和水下观察；转动、平移相机，
+  检查焦散贴合池底及遮挡物；远离原点后重复。对比新水下效果与旧 Curtain 路径。
+- [ ] **实际 MSAA**：URP Asset 1x/2x/4x/8x、相机 Allow MSAA 开/关、目标 RT 的采样数
+  分别组合；确认 Frame Debugger 中 `_CrestDepthTextureOffset` 在实际 1x 时为 0，多采样时为 1，
+  Game/Scene View 及不同采样数相机交替渲染时无残留，水线无亮边或漏雾。
+- [ ] **阴影坐标／变体**：主光无阴影、硬阴影、软阴影 Low/Medium/High；1/2/3/4 级联；
+  Screen Space Shadows 开/关。检查海面累积、水上／水下焦散、Masked 不透明示例及透明水下示例。
+  世界空间查询须读取图集，越出级联范围无错误遮挡；检查 Development Player 的变体裁剪结果。
+- [ ] **探针混合**：两个颜色明显不同的反射探针设置重叠与 Blend Distance，关闭平面反射和自定义
+  Cubemap 后观察交界；混合开/关均有合理结果，移动水面位置时过渡连续，再检查原有反射覆盖选项。
+
 以下为完整回归清单；自动渲染检查的覆盖范围见上文，空复选框表示尚未完成该项的完整人工复核。
 
 - [ ] **导入/编译**：清空 Console 后重新导入；无 C# 错误、Shader error、粉色材质、缺失脚本；保存 Editor.log。
@@ -97,6 +112,7 @@ From the repository root:
 
 ```text
 python tools/check_urp.py
+python tools/check_urp_regressions.py -v
 dotnet run --project tools/StaticChecks -- crest/Assets
 git diff --check
 ```
@@ -108,6 +124,20 @@ does **not** resolve Unity assemblies or verify shader code generation.
 The source checker checks shader include paths, preprocessor/program-block
 balance, unsupported Surface Shader/GrabPass constructs, assembly JSON, package
 pinning, and metadata for new Unity assets.
+
+The targeted regression checks read the actual reconstruction expressions at all
+three caustic call sites and compare 243 points against camera-local ground truth,
+including rotated cameras, off-axis rays and large world offsets. They also check
+per-camera MSAA recording, all main/soft-shadow keyword groups, atlas cascade
+coordinates (including screen-shadow variants and the no-shadow sentinel), surface
+shadow routes and the reflection-probe blending API. These do not compile HLSL or
+replace the local visual checks above. To demonstrate the previous coordinate bug:
+
+```text
+python tools/check_urp_regressions.py --ref 175fe207 URPRegressions.test_reconstructed_points_are_in_front_with_correct_eye_depth
+```
+
+That command is expected to fail on the old source.
 
 See [static-check-results.md](static-check-results.md) for the results recorded
 for this migration.
