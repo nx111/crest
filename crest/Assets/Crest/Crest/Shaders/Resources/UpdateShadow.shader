@@ -16,11 +16,11 @@ Shader "Hidden/Crest/Simulation/Update Shadow"
             #define CREST_SAMPLE_SHADOW_HARD
             #include "../Helpers/URP/Core.hlsl"
             #include "../ShaderLibrary/UpdateShadow.hlsl"
-            half CrestSampleShadows(float4 positionWS)
+            half CrestSampleShadows(const float4 positionWS)
             {
                 return MainLightRealtimeShadow(TransformWorldToShadowCoord(positionWS.xyz));
             }
-            half CrestComputeShadowFade(float4 positionWS)
+            half CrestComputeShadowFade(const float4 positionWS)
             {
                 return GetMainLightShadowFade(positionWS.xyz);
             }
