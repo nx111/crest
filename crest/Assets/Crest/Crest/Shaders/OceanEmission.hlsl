@@ -141,7 +141,11 @@ void ApplyCaustics
 			// Normally, we would use SHADOW_ATTENUATION(), but SHADOWS_SCREEN and UNITY_NO_SCREENSPACE_SHADOWS are not
 			// handled for the transparent pass.
 			// Null texture is a small white texture which will be smaller than the screen size.
-			causticsStrength *= LOAD_TEXTURE2D_X(_CrestScreenSpaceShadowTexture,  min(i_positionSS, (int2)_CrestScreenSpaceShadowTexture_TexelSize.zw - 1)).r;
+			#if defined(CREST_URP)
+            causticsStrength *= MainLightRealtimeShadow(TransformWorldToShadowCoord(i_scenePos));
+#else
+            causticsStrength *= LOAD_TEXTURE2D_X(_CrestScreenSpaceShadowTexture,  min(i_positionSS, (int2)_CrestScreenSpaceShadowTexture_TexelSize.zw - 1)).r;
+#endif
 		}
 	}
 #endif // _SHADOWS_ON

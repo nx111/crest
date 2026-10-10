@@ -109,6 +109,7 @@ namespace Crest
 
         internal void OnDisableMask()
         {
+            ReleaseURPHandles();
             DisableOceanMaskKeywords();
             if (_maskRT != null) _maskRT.Release();
             if (_depthRT != null) _depthRT.Release();
@@ -175,6 +176,7 @@ namespace Crest
             // This will disable MSAA for our textures as MSAA will break sampling later on. This looks safe to do as
             // Unity's CopyDepthPass does the same, but a possible better way or supporting MSAA is worth looking into.
             descriptor.msaaSamples = 1;
+            descriptor.bindMS = false;
 
             // @Memory: We could investigate making this an 8-bit texture instead to reduce GPU memory usage.
             // @Memory: We could potentially try a half resolution mask as the mensicus could mask resolution issues.
@@ -203,6 +205,7 @@ namespace Crest
             }
 
             descriptor.msaaSamples = 1;
+            descriptor.bindMS = false;
             descriptor.colorFormat = RenderTextureFormat.Depth;
             descriptor.depthBufferBits = 24;
 
@@ -216,42 +219,42 @@ namespace Crest
             }
         }
 
-        internal void SetUpVolume(Material maskMaterial)
+        internal void SetUpVolume(Material maskMaterial, CommandBuffer buffer = null)
         {
-            Helpers.SetGlobalKeyword(k_KeywordVolume2D, _mode == Mode.Portal);
-            Helpers.SetGlobalKeyword(k_KeywordVolumeHasBackFace, _mode == Mode.Volume || _mode == Mode.VolumeFlyThrough);
+            SetURPKeyword(buffer, k_KeywordVolume2D, _mode == Mode.Portal);
+            SetURPKeyword(buffer, k_KeywordVolumeHasBackFace, _mode == Mode.Volume || _mode == Mode.VolumeFlyThrough);
             maskMaterial.SetKeyword(k_KeywordVolume, _mode != Mode.FullScreen);
             maskMaterial.SetInt(ShaderIDs.s_StencilRef, UseStencilBufferOnMask ? k_StencilValueVolume : 0);
         }
 
-        void OnPreRenderOceanMask()
+        void OnPreRenderOceanMask(CommandBuffer buffer = null)
         {
-            _oceanMaskCommandBuffer.Clear();
+            if (buffer == null) { buffer = _oceanMaskCommandBuffer; buffer.Clear(); }
 
-            RenderTextureDescriptor descriptor = XRHelpers.GetRenderTextureDescriptor(_camera);
+            RenderTextureDescriptor descriptor = _recordingURP ? _urpDescriptor : XRHelpers.GetRenderTextureDescriptor(_camera);
 
-            descriptor.useDynamicScale = _camera.allowDynamicResolution;
+            if (!_recordingURP) descriptor.useDynamicScale = _camera.allowDynamicResolution;
 
             // Keywords and other things.
-            SetUpVolume(_oceanMaskMaterial.material);
+            SetUpVolume(_oceanMaskMaterial.material, _recordingURP ? buffer : null);
             SetUpMaskTextures(descriptor);
 
             // Populate water volume before mask so we can use the stencil.
             if (_mode != Mode.FullScreen && _volumeGeometry != null)
             {
                 SetUpVolumeTextures(descriptor);
-                PopulateVolumeFront(_oceanMaskCommandBuffer, _volumeFrontFaceTarget, _volumeBackFaceTarget);
-                PopulateVolumeBack(_oceanMaskCommandBuffer, _volumeFrontFaceTarget, _volumeBackFaceTarget);
+                PopulateVolumeFront(buffer, _volumeFrontFaceTarget, _volumeBackFaceTarget);
+                PopulateVolumeBack(buffer, _volumeFrontFaceTarget, _volumeBackFaceTarget);
                 // Copy only the stencil by copying everything and clearing depth.
                 if (!_depthRT.IsCreated()) _depthRT.Create();
-                _oceanMaskCommandBuffer.CopyTexture(_mode == Mode.Portal ? _volumeFrontFaceTarget : _volumeBackFaceTarget, _depthTarget);
-                Helpers.Blit(_oceanMaskCommandBuffer, _depthTarget, Helpers.UtilityMaterial, (int)Helpers.UtilityPass.ClearDepth);
+                buffer.CopyTexture(_mode == Mode.Portal ? _volumeFrontFaceTarget : _volumeBackFaceTarget, _depthTarget);
+                Helpers.Blit(buffer, _depthTarget, Helpers.UtilityMaterial, (int)Helpers.UtilityPass.ClearDepth);
             }
 
-            SetUpMask(_oceanMaskCommandBuffer, _maskTarget, _depthTarget);
+            SetUpMask(buffer, _maskTarget, _depthTarget);
             SetInverseViewProjectionMatrix(_oceanMaskMaterial.material);
             PopulateOceanMask(
-                _oceanMaskCommandBuffer,
+                buffer,
                 _camera,
                 OceanRenderer.Instance.Tiles,
                 _cameraFrustumPlanes,
@@ -261,7 +264,7 @@ namespace Crest
                 _debug._disableOceanMask
             );
 
-            FixMaskArtefacts(_oceanMaskCommandBuffer, descriptor, _maskTarget);
+            FixMaskArtefacts(buffer, descriptor, _maskTarget);
         }
 
         internal void PopulateVolumeFront(CommandBuffer buffer, RenderTargetIdentifier frontTarget, RenderTargetIdentifier backTarget, MaterialPropertyBlock properties = null, Vector2Int targetSize = default)

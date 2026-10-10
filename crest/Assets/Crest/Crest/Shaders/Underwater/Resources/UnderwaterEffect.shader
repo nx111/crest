@@ -5,8 +5,11 @@
 Shader "Hidden/Crest/Underwater/Underwater Effect"
 {
 	HLSLINCLUDE
+	#pragma target 4.5
 	#pragma vertex Vert
 	#pragma fragment Frag
+	#pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+	#pragma multi_compile_fragment _ _SHADOWS_SOFT
 
 	// #pragma enable_d3d11_debug_symbols
 
@@ -24,17 +27,16 @@ Shader "Hidden/Crest/Underwater/Underwater Effect"
 	#pragma multi_compile_fragment _ CREST_UNDERWATER_BEFORE_TRANSPARENT
 	#pragma multi_compile_fragment _ CREST_FLOATING_ORIGIN
 
-	#include "UnityCG.cginc"
-	#include "Lighting.cginc"
+	#include "../../Helpers/URP/Core.hlsl"
 
-	#include "../../Helpers/BIRP/Core.hlsl"
-	#include "../../Helpers/BIRP/InputsDriven.hlsl"
-	#include "../../FullScreenTriangle.hlsl"
-	#include "../../Helpers/BIRP/Lighting.hlsl"
+
+
+
 	ENDHLSL
 
 	SubShader
 	{
+		Tags { "RenderPipeline"="UniversalPipeline" }
 		// Set alpha where we write underwater similar to skybox.
 		Blend One Zero, One One
 		BlendOp Add

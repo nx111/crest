@@ -19,12 +19,7 @@ Shader "Crest/Underwater Curtain"
 
 	SubShader
 	{
-		Tags{ "LightMode" = "ForwardBase" "Queue" = "Geometry+510" "IgnoreProjector" = "True" "RenderType" = "Opaque" }
-
-		GrabPass
-		{
-			"_BackgroundTexture"
-		}
+		Tags { "RenderPipeline"="UniversalPipeline" "LightMode" = "UniversalForwardOnly" "Queue" = "Geometry+510" "IgnoreProjector" = "True" "RenderType" = "Opaque" }
 
 		Pass
 		{
@@ -32,9 +27,12 @@ Shader "Crest/Underwater Curtain"
 			ZWrite Off
 			ZTest Always
 
-			CGPROGRAM
-			#pragma vertex Vert
+			HLSLPROGRAM
+			#pragma target 4.5
+	#pragma vertex Vert
 			#pragma fragment Frag
+	#pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+	#pragma multi_compile_fragment _ _SHADOWS_SOFT
 
 			// #pragma enable_d3d11_debug_symbols
 
@@ -46,10 +44,7 @@ Shader "Crest/Underwater Curtain"
 			#pragma multi_compile_local __ _CAUSTICS_ON
 			#pragma multi_compile_local __ _SHADOWS_ON
 
-			#include "UnityCG.cginc"
-			#include "Lighting.cginc"
-
-			#include "../Helpers/BIRP/Core.hlsl"
+			#include "../Helpers/URP/Core.hlsl"
 
 			#include "../ShaderLibrary/Common.hlsl"
 
@@ -168,7 +163,7 @@ Shader "Crest/Underwater Curtain"
 
 				o.foam_screenPos.x = 0.0;
 				o.foam_screenPos.yzw = ComputeScreenPos(o.positionCS).xyw;
-				o.grabPos = ComputeGrabScreenPos(o.positionCS);
+				o.grabPos = ComputeScreenPos(o.positionCS);
 
 				o.uv = input.uv;
 
@@ -229,7 +224,7 @@ Shader "Crest/Underwater Curtain"
 
 				return half4(col, 1.0);
 			}
-			ENDCG
+			ENDHLSL
 		}
 	}
 }

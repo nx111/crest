@@ -30,15 +30,31 @@ namespace Crest.Examples
             }
 
             _currentEvent = Event;
+            if (GraphicsSettings.currentRenderPipeline != null)
+            {
+                CrestUniversalRendererFeature.BeforeSceneRendering -= OnURPBeforeScene;
+                CrestUniversalRendererFeature.BeforeSceneRendering += OnURPBeforeScene;
+                return;
+            }
 
             Camera.onPreRender -= OnBeforeRender;
             Camera.onPreRender += OnBeforeRender;
         }
 
+        void OnURPBeforeScene(CommandBuffer buffer, Camera camera, RenderTextureDescriptor descriptor)
+        {
+            if (Camera.main == camera || camera.cameraType == CameraType.SceneView)
+                Execute(buffer, camera, descriptor);
+            else Clear(buffer, camera);
+        }
+
         void OnDisable()
         {
+            CrestUniversalRendererFeature.BeforeSceneRendering -= OnURPBeforeScene;
             Camera.onPreRender -= OnBeforeRender;
             CleanCameras();
+            _buffer?.Release();
+            _buffer = null;
         }
 
         void CleanCameras()
@@ -71,6 +87,7 @@ namespace Crest.Examples
                 {
                     CleanCameras();
                     _currentEvent = Event;
+
                 }
 
                 _cameras.Add(camera);

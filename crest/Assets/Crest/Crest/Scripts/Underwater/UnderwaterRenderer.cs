@@ -292,7 +292,7 @@ namespace Crest
             }
 #endif
 
-            if (_enableShaderAPI != _currentEnableShaderAPI && _underwaterEffectCommandBuffer != null)
+            if (GraphicsSettings.currentRenderPipeline == null && _enableShaderAPI != _currentEnableShaderAPI && _underwaterEffectCommandBuffer != null)
             {
                 _camera.RemoveCommandBuffer(CameraEvent.BeforeForwardAlpha, _underwaterEffectCommandBuffer);
                 _camera.RemoveCommandBuffer(CameraEvent.AfterForwardAlpha, _underwaterEffectCommandBuffer);
@@ -318,7 +318,7 @@ namespace Crest
             if (s_PrimaryCamera != OceanRenderer.Instance.ViewCameraExcludingSceneCamera)
             {
                 s_PrimaryCamera = OceanRenderer.Instance.ViewCameraExcludingSceneCamera;
-                if (s_PrimaryCamera.TryGetComponent<UnderwaterRenderer>(out var instance))
+                if (s_PrimaryCamera != null && s_PrimaryCamera.TryGetComponent<UnderwaterRenderer>(out var instance))
                 {
 #if UNITY_EDITOR
                     if (Instance != null) Instance.DisableEditMode();
@@ -333,6 +333,7 @@ namespace Crest
 
         void AddCommandBuffers(Camera camera)
         {
+            if (GraphicsSettings.currentRenderPipeline != null) return;
             // Handle both forward and deferred.
             if (_oceanMaskCommandBuffer != null)
             {
@@ -345,6 +346,7 @@ namespace Crest
 
         void RemoveCommandBuffers(Camera camera)
         {
+            if (GraphicsSettings.currentRenderPipeline != null) return;
             if (_oceanMaskCommandBuffer != null)
             {
                 // Handle both forward and deferred.
@@ -476,6 +478,7 @@ namespace Crest
     {
         void EnableEditMode()
         {
+            if (GraphicsSettings.currentRenderPipeline != null) return;
             if (Instance != this)
             {
                 return;

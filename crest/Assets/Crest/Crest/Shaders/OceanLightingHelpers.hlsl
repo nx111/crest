@@ -9,7 +9,9 @@ namespace WaveHarmonic
 {
 	namespace Crest
 	{
-#if defined(LIGHTING_INCLUDED)
+#if defined(CREST_URP)
+        float3 WorldSpaceLightDir(float3 worldPos) { return GetMainLight().direction; }
+#elif defined(LIGHTING_INCLUDED)
 		float3 WorldSpaceLightDir(float3 worldPos)
 		{
 			float3 lightDir = _WorldSpaceLightPos0.xyz;

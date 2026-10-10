@@ -11,7 +11,7 @@
 #include "../OceanShaderHelpers.hlsl"
 #include "../OceanEmission.hlsl"
 
-#include "../../Helpers/WaterVolume.hlsl"
+#include "../Helpers/WaterVolume.hlsl"
 
 TEXTURE2D_X(_CrestCameraColorTexture);
 TEXTURE2D_X(_CrestOceanMaskTexture);

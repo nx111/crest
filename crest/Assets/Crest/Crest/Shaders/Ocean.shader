@@ -202,8 +202,7 @@ Shader "Crest/Ocean"
 
 	SubShader
 	{
-		Tags
-		{
+		Tags { "RenderPipeline"="UniversalPipeline"
 			// Unity treats anything after Geometry+500 as transparent, and will render it in a forward manner and copy
 			// out the gbuffer data and do post processing before running it. Discussion of this in issue #53.
 			"Queue"="Geometry+510"
@@ -212,11 +211,6 @@ Shader "Crest/Ocean"
 			// Transparent prevents water being rendered into depth+normals which fixes SAO.
 			"RenderType"="Transparent"
 			"DisableBatching"="True"
-		}
-
-		GrabPass
-		{
-			"_BackgroundTexture"
 		}
 
 		Pass
@@ -230,14 +224,16 @@ Shader "Crest/Ocean"
 			{
 				// Tell Unity we're going to render water in forward manner and we're going to do lighting and it will set
 				// the appropriate uniforms.
-				"LightMode"="ForwardBase"
+				"LightMode"="UniversalForwardOnly"
 			}
 
-			CGPROGRAM
+			HLSLPROGRAM
 			#pragma vertex Vert
 			#pragma fragment Frag
+	#pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+	#pragma multi_compile_fragment _ _SHADOWS_SOFT
 			// for VFACE
-			#pragma target 3.0
+			#pragma target 4.5
 			#pragma multi_compile_fog
 
 			// #pragma enable_d3d11_debug_symbols
@@ -275,11 +271,8 @@ Shader "Crest/Ocean"
 
 			#pragma multi_compile _ CREST_FLOATING_ORIGIN
 
-			#include "UnityCG.cginc"
-			#include "Lighting.cginc"
+			#include "Helpers/URP/Core.hlsl"
 
-			#include "Helpers/BIRP/Core.hlsl"
-			#include "Helpers/BIRP/InputsDriven.hlsl"
 
 			#include "ShaderLibrary/Common.hlsl"
 
@@ -458,7 +451,7 @@ Shader "Crest/Ocean"
 				// unfortunate hoop jumping - this is inputs for refraction. depending on whether HDR is on or off, the grabbed scene
 				// colours may or may not come from the backbuffer, which means they may or may not be flipped in y. use these macros
 				// to get the right results, every time.
-				o.grabPos = ComputeGrabScreenPos(o.positionCS);
+				o.grabPos = ComputeScreenPos(o.positionCS);
 				o.screenPosXYW = ComputeScreenPos(o.positionCS).xyw;
 				return o;
 			}
@@ -809,7 +802,7 @@ Shader "Crest/Ocean"
 				return half4(col, reflAlpha);
 			}
 
-			ENDCG
+			ENDHLSL
 		}
 
 		Pass
@@ -817,19 +810,17 @@ Shader "Crest/Ocean"
 			Name "SceneSelectionPass"
 			Tags { "LightMode" = "SceneSelectionPass" }
 
-			CGPROGRAM
+			HLSLPROGRAM
 			#pragma vertex Vert
 			#pragma fragment Frag
 			// for VFACE
-			#pragma target 3.0
+			#pragma target 4.5
 
-			#include "UnityCG.cginc"
+			#include "Helpers/URP/Core.hlsl"
 
-			#include "Helpers/BIRP/Core.hlsl"
-			#include "Helpers/BIRP/InputsDriven.hlsl"
 
 			#include "Underwater/UnderwaterMaskShared.hlsl"
-			ENDCG
+			ENDHLSL
 		}
 	}
 

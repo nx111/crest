@@ -1,3 +1,7 @@
+> **urp branch — Unity 6000.6 / URP 17.6**
+> Independent source port using Render Graph. Unity compilation and GPU validation are pending locally.
+> Start with [setup and local verification checklist](docs/URP-MIGRATION.md).
+
 <div align="center">
 
 ![Header](https://github.com/wave-harmonic/crest/blob/master/img/Header.jpg?raw=true)
@@ -14,7 +18,7 @@
   <a href="https://github.com/sponsors/wave-harmonic">Sponsorship</a>
 </p>
 
-This repository targets the built-in renderer. For other render pipelines, see the following:
+The upstream repository targets the built-in renderer. The `urp` branch of this fork targets URP; see the migration guide above. For other render pipelines, see the following:
 
 
 
@@ -81,7 +85,7 @@ Full [documentation](https://crest.readthedocs.io/en/latest) is available online
 
 <hr><h3 align="center">REQUIREMENTS</h3><hr>
 
-* Unity: 2022.3.62f3 or later
+* This branch: Unity 6000.6.0f1, URP 17.6.0, Render Graph enabled
 * [Shader compilation target](https://docs.unity3d.com/Manual/SL-ShaderCompileTargets.html) 4.5 or above
 * *Crest* does **not** support OpenGL or WebGL backends
 

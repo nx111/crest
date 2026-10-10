@@ -367,7 +367,7 @@ namespace Crest
             try
             {
                 // Render scene, saving depths in depth buffer.
-                _camDepthCache.Render();
+                CrestRenderRequest.Render(_camDepthCache, _camDepthCache.targetTexture, shadows: false);
             }
             finally
             {

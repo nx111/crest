@@ -98,27 +98,32 @@ namespace Crest
             }
         }
 
-        void OnPreRenderUnderwaterEffect()
+        void OnPreRenderUnderwaterEffect(CommandBuffer buffer = null)
         {
+            if (buffer == null) buffer = _underwaterEffectCommandBuffer;
 #if UNITY_EDITOR
             if (!IsFogEnabledForEditorCamera(_camera))
             {
-                _underwaterEffectCommandBuffer?.Clear();
+                if (!_recordingURP) buffer?.Clear();
                 return;
             }
 #endif
 
-            RenderTextureDescriptor descriptor = XRHelpers.GetRenderTextureDescriptor(_camera);
-            descriptor.useDynamicScale = _camera.allowDynamicResolution;
+            RenderTextureDescriptor descriptor = _recordingURP ? _urpDescriptor : XRHelpers.GetRenderTextureDescriptor(_camera);
+            if (!_recordingURP) descriptor.useDynamicScale = _camera.allowDynamicResolution;
 
             // Format must be correct for CopyTexture to work. Hopefully this is good enough.
-            if (_camera.allowHDR)
+            if (!_recordingURP && _camera.allowHDR)
             {
                 descriptor.colorFormat = RenderTextureFormat.DefaultHDR;
             }
 
-            var temporaryColorBuffer = RenderTexture.GetTemporary(descriptor);
-            temporaryColorBuffer.name = "_CrestCameraColorTexture";
+            RenderTexture temporaryColorBuffer = null;
+            if (!_recordingURP)
+            {
+                temporaryColorBuffer = RenderTexture.GetTemporary(descriptor);
+                temporaryColorBuffer.name = "_CrestCameraColorTexture";
+            }
 
             UpdatePostProcessMaterial(
                 this,
@@ -133,21 +138,22 @@ namespace Crest
                 _filterOceanData,
                 ref _currentOceanMaterial,
                 _enableShaderAPI,
-                _overlay
+                _overlay,
+                _recordingURP ? buffer : null
             );
 
             // Call after UpdatePostProcessMaterial as it copies material from ocean which will overwrite this.
             SetInverseViewProjectionMatrix(_underwaterEffectMaterial.material);
 
-            _underwaterEffectCommandBuffer.Clear();
+            if (!_recordingURP) buffer.Clear();
 
-            if (RenderSettings.sun != null)
+            if (!_recordingURP && RenderSettings.sun != null)
             {
                 // Unity does not set up lighting for us so we will get the last value which could incorrect.
                 // SetGlobalColor is just an alias for SetGlobalVector (no color space conversion like Material.SetColor):
                 // https://docs.unity3d.com/2017.4/Documentation/ScriptReference/Shader.SetGlobalColor.html
-                _underwaterEffectCommandBuffer.SetGlobalVector(ShaderIDs.s_LightColor0, RenderSettings.sun.FinalColor());
-                _underwaterEffectCommandBuffer.SetGlobalVector(ShaderIDs.s_WorldSpaceLightPos0, -RenderSettings.sun.transform.forward);
+                buffer.SetGlobalVector(ShaderIDs.s_LightColor0, RenderSettings.sun.FinalColor());
+                buffer.SetGlobalVector(ShaderIDs.s_WorldSpaceLightPos0, -RenderSettings.sun.transform.forward);
             }
 
             // Create a separate stencil buffer context by copying the depth texture.
@@ -156,46 +162,46 @@ namespace Crest
                 descriptor.colorFormat = RenderTextureFormat.Depth;
                 descriptor.depthBufferBits = 24;
                 // bindMS is necessary in this case for depth.
-                descriptor.SetMSAASamples(_camera);
+                if (!_recordingURP) descriptor.SetMSAASamples(_camera);
                 descriptor.bindMS = descriptor.msaaSamples > 1;
 
-                _underwaterEffectCommandBuffer.GetTemporaryRT(ShaderIDs.s_CrestWaterVolumeStencil, descriptor);
+                buffer.GetTemporaryRT(ShaderIDs.s_CrestWaterVolumeStencil, descriptor);
 
                 // Use blit for MSAA. We should be able to use CopyTexture. Might be the following bug:
                 // https://issuetracker.unity3d.com/product/unity/issues/guid/1308132
-                if (Helpers.IsMSAAEnabled(_camera))
+                if (_recordingURP || Helpers.IsMSAAEnabled(_camera))
                 {
                     // Blit with a depth write shader to populate the depth buffer.
-                    Helpers.Blit(_underwaterEffectCommandBuffer, _depthStencilTarget, Helpers.UtilityMaterial, (int)Helpers.UtilityPass.CopyDepth);
+                    Helpers.Blit(buffer, _depthStencilTarget, Helpers.UtilityMaterial, (int)Helpers.UtilityPass.CopyDepth);
                 }
                 else
                 {
                     // Copy depth then clear stencil.
-                    _underwaterEffectCommandBuffer.CopyTexture(BuiltinRenderTextureType.Depth, _depthStencilTarget);
-                    Helpers.Blit(_underwaterEffectCommandBuffer, _depthStencilTarget, Helpers.UtilityMaterial, (int)Helpers.UtilityPass.ClearStencil);
+                    buffer.CopyTexture(BuiltinRenderTextureType.Depth, _depthStencilTarget);
+                    Helpers.Blit(buffer, _depthStencilTarget, Helpers.UtilityMaterial, (int)Helpers.UtilityPass.ClearStencil);
                 }
             }
 
             // Copy the color buffer into a texture.
-            _underwaterEffectCommandBuffer.Blit(BuiltinRenderTextureType.CameraTarget, temporaryColorBuffer);
+            if (!_recordingURP) buffer.Blit(BuiltinRenderTextureType.CameraTarget, temporaryColorBuffer);
 
             if (UseStencilBufferOnEffect)
             {
-                _underwaterEffectCommandBuffer.SetRenderTarget(_colorTarget, _depthStencilTarget);
+                buffer.SetRenderTarget(_colorTarget, _depthStencilTarget);
             }
             else
             {
-                _underwaterEffectCommandBuffer.SetRenderTarget(_colorTarget);
+                buffer.SetRenderTarget(_colorTarget);
             }
 
-            _underwaterEffectMaterial.SetTexture(ShaderIDs.s_CrestCameraColorTexture, temporaryColorBuffer);
+            if (!_recordingURP) _underwaterEffectMaterial.SetTexture(ShaderIDs.s_CrestCameraColorTexture, temporaryColorBuffer);
 
-            ExecuteEffect(_underwaterEffectCommandBuffer, _underwaterEffectMaterial.material);
+            ExecuteEffect(buffer, _underwaterEffectMaterial.material);
 
-            RenderTexture.ReleaseTemporary(temporaryColorBuffer);
+            if (temporaryColorBuffer != null) RenderTexture.ReleaseTemporary(temporaryColorBuffer);
             if (UseStencilBufferOnEffect)
             {
-                _underwaterEffectCommandBuffer.ReleaseTemporaryRT(ShaderIDs.s_CrestWaterVolumeStencil);
+                buffer.ReleaseTemporaryRT(ShaderIDs.s_CrestWaterVolumeStencil);
             }
         }
 
@@ -262,20 +268,29 @@ namespace Crest
             }
         }
 
-        internal static void UpdateGlobals(Material oceanMaterial)
+        internal static void UpdateGlobals(Material oceanMaterial, CommandBuffer buffer = null)
         {
+            void SetColor(int id, Color value)
+            {
+                if (buffer == null) Shader.SetGlobalColor(id, value); else buffer.SetGlobalColor(id, value);
+            }
+            void SetFloat(int id, float value)
+            {
+                if (buffer == null) Shader.SetGlobalFloat(id, value); else buffer.SetGlobalFloat(id, value);
+            }
+
             // We will have the wrong color values if we do not use linear:
             // https://forum.unity.com/threads/fragment-shader-output-colour-has-incorrect-values-when-hardcoded.377657/
-            Shader.SetGlobalColor(ShaderIDs.s_CrestDiffuse, oceanMaterial.GetColor(OceanRenderer.ShaderIDs.s_Diffuse).MaybeLinear());
-            Shader.SetGlobalColor(ShaderIDs.s_CrestDiffuseGrazing, oceanMaterial.GetColor(OceanRenderer.ShaderIDs.s_DiffuseGrazing).MaybeLinear());
-            Shader.SetGlobalColor(ShaderIDs.s_CrestDiffuseShadow, oceanMaterial.GetColor(OceanRenderer.ShaderIDs.s_DiffuseShadow).MaybeLinear());
-            Shader.SetGlobalColor(ShaderIDs.s_CrestSubSurfaceColour, oceanMaterial.GetColor(OceanRenderer.ShaderIDs.s_SubSurfaceColour).MaybeLinear());
-            Shader.SetGlobalFloat(ShaderIDs.s_CrestSubSurfaceSun, oceanMaterial.GetFloat(OceanRenderer.ShaderIDs.s_SubSurfaceSun));
-            Shader.SetGlobalFloat(ShaderIDs.s_CrestSubSurfaceBase, oceanMaterial.GetFloat(OceanRenderer.ShaderIDs.s_SubSurfaceBase));
-            Shader.SetGlobalFloat(ShaderIDs.s_CrestSubSurfaceSunFallOff, oceanMaterial.GetFloat(OceanRenderer.ShaderIDs.s_SubSurfaceSunFallOff));
+            SetColor(ShaderIDs.s_CrestDiffuse, oceanMaterial.GetColor(OceanRenderer.ShaderIDs.s_Diffuse).MaybeLinear());
+            SetColor(ShaderIDs.s_CrestDiffuseGrazing, oceanMaterial.GetColor(OceanRenderer.ShaderIDs.s_DiffuseGrazing).MaybeLinear());
+            SetColor(ShaderIDs.s_CrestDiffuseShadow, oceanMaterial.GetColor(OceanRenderer.ShaderIDs.s_DiffuseShadow).MaybeLinear());
+            SetColor(ShaderIDs.s_CrestSubSurfaceColour, oceanMaterial.GetColor(OceanRenderer.ShaderIDs.s_SubSurfaceColour).MaybeLinear());
+            SetFloat(ShaderIDs.s_CrestSubSurfaceSun, oceanMaterial.GetFloat(OceanRenderer.ShaderIDs.s_SubSurfaceSun));
+            SetFloat(ShaderIDs.s_CrestSubSurfaceBase, oceanMaterial.GetFloat(OceanRenderer.ShaderIDs.s_SubSurfaceBase));
+            SetFloat(ShaderIDs.s_CrestSubSurfaceSunFallOff, oceanMaterial.GetFloat(OceanRenderer.ShaderIDs.s_SubSurfaceSunFallOff));
 
-            Helpers.SetGlobalKeyword("CREST_SUBSURFACESCATTERING_ON", oceanMaterial.IsKeywordEnabled("_SUBSURFACESCATTERING_ON"));
-            Helpers.SetGlobalKeyword("CREST_SHADOWS_ON", oceanMaterial.IsKeywordEnabled("_SHADOWS_ON"));
+            SetURPKeyword(buffer, "CREST_SUBSURFACESCATTERING_ON", oceanMaterial.IsKeywordEnabled("_SUBSURFACESCATTERING_ON"));
+            SetURPKeyword(buffer, "CREST_SHADOWS_ON", oceanMaterial.IsKeywordEnabled("_SHADOWS_ON"));
         }
 
         internal static void UpdatePostProcessMaterial(
@@ -291,7 +306,8 @@ namespace Crest
             int dataSliceOffset,
             ref Material currentOceanMaterial,
             bool setGlobalShaderData,
-            bool overlay = false
+            bool overlay = false,
+            CommandBuffer buffer = null
         )
         {
             Material underwaterPostProcessMaterial = underwaterPostProcessMaterialWrapper.material;
@@ -333,12 +349,12 @@ namespace Crest
 
                         AfterCopyMaterial?.Invoke(material);
 
-                        if (setGlobalShaderData)
-                        {
-                            UpdateGlobals(material);
-                        }
+
                     }
                 }
+
+                // Globals belong to each camera, even when the material copy is cached.
+                if (setGlobalShaderData && currentOceanMaterial != null) UpdateGlobals(currentOceanMaterial, buffer);
 
                 Vector3 depthFogDensity;
 
@@ -356,7 +372,8 @@ namespace Crest
 
                 if (setGlobalShaderData)
                 {
-                    Shader.SetGlobalVector(ShaderIDs.s_CrestDepthFogDensity, depthFogDensity);
+                    if (buffer == null) Shader.SetGlobalVector(ShaderIDs.s_CrestDepthFogDensity, depthFogDensity);
+                    else buffer.SetGlobalVector(ShaderIDs.s_CrestDepthFogDensity, depthFogDensity);
                 }
 
                 underwaterPostProcessMaterial.SetVector(OceanRenderer.ShaderIDs.s_DepthFogDensity, depthFogDensity);
@@ -368,7 +385,8 @@ namespace Crest
             underwaterPostProcessMaterial.SetKeyword("CREST_MENISCUS", isMeniscusEnabled);
 
             // We sample shadows at the camera position. Pass a user defined slice offset for smoothing out detail.
-            Helpers.SetShaderInt(underwaterPostProcessMaterial, ShaderIDs.s_CrestDataSliceOffset, dataSliceOffset, setGlobalShaderData);
+            Helpers.SetShaderInt(underwaterPostProcessMaterial, ShaderIDs.s_CrestDataSliceOffset, dataSliceOffset, setGlobalShaderData && buffer == null);
+            if (setGlobalShaderData && buffer != null) buffer.SetGlobalInt(ShaderIDs.s_CrestDataSliceOffset, dataSliceOffset);
             // We use this for caustics to get the displacement.
             underwaterPostProcessMaterial.SetInt(LodDataMgr.sp_LD_SliceIndex, 0);
 
@@ -434,7 +452,8 @@ namespace Crest
                 UnityEngine.Profiling.Profiler.BeginSample("Underwater Sample Spherical Harmonics");
                 LightProbes.GetInterpolatedProbe(camera.transform.position, null, out var sphericalHarmonicsL2);
                 sphericalHarmonicsL2.Evaluate(sphericalHarmonicsData._shDirections, sphericalHarmonicsData._ambientLighting);
-                Helpers.SetShaderVector(underwaterPostProcessMaterial, ShaderIDs.s_CrestAmbientLighting, sphericalHarmonicsData._ambientLighting[0], setGlobalShaderData);
+                Helpers.SetShaderVector(underwaterPostProcessMaterial, ShaderIDs.s_CrestAmbientLighting, sphericalHarmonicsData._ambientLighting[0], setGlobalShaderData && buffer == null);
+                if (setGlobalShaderData && buffer != null) buffer.SetGlobalVector(ShaderIDs.s_CrestAmbientLighting, sphericalHarmonicsData._ambientLighting[0]);
                 UnityEngine.Profiling.Profiler.EndSample();
             }
 

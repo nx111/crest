@@ -6,7 +6,9 @@
         "Unity.InputSystem",
         "Unity.Mathematics",
         "Unity.Burst",
-        "Unity.Splines"
+        "Unity.Splines",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

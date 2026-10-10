@@ -55,6 +55,8 @@ namespace Crest.Examples
             if (Helpers.RenderTargetTextureNeedsUpdating(_texture, descriptor))
             {
                 // RFloat is supported much better than RHalf.
+                descriptor.msaaSamples = 1;
+                descriptor.bindMS = false;
                 descriptor.colorFormat = RenderTextureFormat.RFloat;
                 descriptor.depthBufferBits = 24;
                 _texture.Release();

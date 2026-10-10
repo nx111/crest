@@ -1,7 +1,4 @@
-// Crest Ocean System
-
-// This file is subject to the MIT License as seen in the root of this folder structure (LICENSE)
-
+// Crest Ocean System - MIT License (see LICENSE)
 Shader "Crest/Examples/Masked"
 {
 	Properties
@@ -16,175 +13,137 @@ Shader "Crest/Examples/Masked"
 		[KeywordEnum(None, Masked, Fill)] _Mask("Masked", Float) = 1.0
 	}
 
-	SubShader
-	{
-		Tags { "RenderType"="Opaque" }
 
-		CGINCLUDE
-		#pragma shader_feature_local _MASK_NONE _MASK_MASKED _MASK_FILL
+    SubShader
+    {
+        Tags { "RenderPipeline"="UniversalPipeline" "RenderType"="Opaque" }
+        HLSLINCLUDE
+        #pragma target 4.5
+        #pragma shader_feature_local _MASK_NONE _MASK_MASKED _MASK_FILL
+        #pragma shader_feature_local _EMISSION_ON
 
-		// NOTE: SHADER_TARGET_SURFACE_ANALYSIS does not want the semicolon but compiler does for builds.
-#if _MASK_MASKED
-		UNITY_DECLARE_SCREENSPACE_TEXTURE(_CrestOceanMaskTexture)
-#ifndef SHADER_TARGET_SURFACE_ANALYSIS
-		;
-#endif
-		UNITY_DECLARE_SCREENSPACE_TEXTURE(_CrestWaterVolumeFrontFaceTexture)
-#ifndef SHADER_TARGET_SURFACE_ANALYSIS
-		;
-#endif
-		UNITY_DECLARE_SCREENSPACE_TEXTURE(_CrestWaterVolumeBackFaceTexture)
-#ifndef SHADER_TARGET_SURFACE_ANALYSIS
-		;
-#endif
-#elif _MASK_FILL
-		UNITY_DECLARE_SCREENSPACE_TEXTURE(_FillTexture)
-#ifndef SHADER_TARGET_SURFACE_ANALYSIS
-		;
-#endif
-#endif // _MASK
+        #include "../../../Crest/Shaders/Helpers/URP/Core.hlsl"
+        struct Attributes { float3 positionOS : POSITION; float3 normalOS : NORMAL; float2 uv : TEXCOORD0; UNITY_VERTEX_INPUT_INSTANCE_ID };
+        struct Varyings { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float3 normalWS : TEXCOORD1; float2 uv : TEXCOORD2; float4 screenPos : TEXCOORD3; float fog : TEXCOORD4; UNITY_VERTEX_OUTPUT_STEREO };
+        Varyings Vert(Attributes input)
+        {
+            Varyings o = (Varyings)0;
+            UNITY_SETUP_INSTANCE_ID(input);
+            UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
+            o.positionWS = TransformObjectToWorld(input.positionOS);
+            o.positionCS = TransformWorldToHClip(o.positionWS);
+            o.normalWS = TransformObjectToWorldNormal(input.normalOS);
+            o.uv = input.uv;
+            o.screenPos = ComputeScreenPos(o.positionCS);
+            o.fog = ComputeFogFactor(o.positionCS.z);
+            return o;
+        }
+        half4 Shade(Varyings i, half4 albedo, half metallic, half smoothness, half3 emission)
+        {
+            InputData data = (InputData)0;
+            data.positionWS = i.positionWS;
+            data.normalWS = normalize(i.normalWS);
+            data.viewDirectionWS = GetWorldSpaceNormalizeViewDir(i.positionWS);
+            data.shadowCoord = TransformWorldToShadowCoord(i.positionWS);
+            data.bakedGI = SampleSH(data.normalWS);
+            data.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(i.positionCS);
+            data.shadowMask = half4(1,1,1,1);
+            SurfaceData surface = (SurfaceData)0;
+            surface.albedo = albedo.rgb;
+            surface.alpha = albedo.a;
+            surface.metallic = metallic;
+            surface.smoothness = smoothness;
+            surface.normalTS = half3(0,0,1);
+            surface.occlusion = 1;
+            surface.emission = emission;
+            return UniversalFragmentPBR(data, surface);
+        }
 
-		UNITY_DECLARE_TEX2D(_Albedo);
-		fixed4 _Color;
-		half _Cutoff;
-
-		// NOTE: Do not use discard in either of these methods or incur the following:
-		// > Program 'frag_Surface', internal error: argument pulled into unrelated predicate.
-#if _MASK_MASKED
-		bool Clip(float4 screenPos)
-		{
-			float2 positionNDC = screenPos.xy / screenPos.w;
-			float deviceDepth = screenPos.z / screenPos.w;
-
-			float rawFrontFaceZ = UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CrestWaterVolumeFrontFaceTexture, positionNDC).r;
-			if (rawFrontFaceZ < deviceDepth && rawFrontFaceZ > 0.0)
-			{
-				return true;
-			}
-
-			float rawBackFaceZ = UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CrestWaterVolumeBackFaceTexture, positionNDC).r;
-			if (rawBackFaceZ > deviceDepth && rawBackFaceZ > 0.0)
-			{
-				return true;
-			}
-
-			return UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CrestOceanMaskTexture, positionNDC).r == 0.0;
-		}
-#endif // _MASK_MASKED
-
-#if _MASK_FILL
-		bool Clip(float4 screenPos)
-		{
-			float2 positionNDC = screenPos.xy / screenPos.w;
-			float deviceZ = screenPos.z / screenPos.w;
-
-			return UNITY_SAMPLE_SCREENSPACE_TEXTURE(_FillTexture, positionNDC).r == 0.0;
-		}
-#endif // _MASK_FILL
-		ENDCG
-
-		Pass
-		{
-			// Required as we are modifying geometry in the fragment shader. Depth for CameraDepthTexture will come from
-			// this pass.
-			Name "Shadow Caster"
-			Tags { "LightMode"="ShadowCaster" }
-
-			CGPROGRAM
-			#pragma vertex vert
-			#pragma fragment frag
-
-			#pragma multi_compile_shadowcaster
-
-			#pragma multi_compile _ _SHADOW_PASS
-
-			#include "UnityCG.cginc"
-
-			#include "../../../Crest/Shaders/Helpers/BIRP/Core.hlsl"
-
-			struct Varyings
-			{
-				V2F_SHADOW_CASTER;
-				float2 uv : TEXCOORD0;
-				float4 screenPos : TEXCOORD1;
-				UNITY_VERTEX_OUTPUT_STEREO
-			};
-
-			Varyings vert(appdata_base v)
-			{
-				Varyings output;
-				ZERO_INITIALIZE(Varyings, output);
-				UNITY_SETUP_INSTANCE_ID(v);
-				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
-
-				TRANSFER_SHADOW_CASTER_NORMALOFFSET(output)
-				output.screenPos = ComputeScreenPos(output.pos);
-				output.uv = v.texcoord.xy;
-				return output;
-			}
-
-			float4 frag(Varyings input) : SV_Target
-			{
-				// We need this when sampling a screenspace texture.
-				UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
-
-#ifndef _MASK_NONE
-#ifndef _SHADOW_PASS
-				if (Clip(input.screenPos))
-				{
-					discard;
-				}
-#endif // !_SHADOWS
-#endif // _MASKED_ON
-
-				fixed4 c = UNITY_SAMPLE_TEX2D(_Albedo, input.uv) * _Color;
-				clip(c.a - _Cutoff);
-				SHADOW_CASTER_FRAGMENT(i)
-			}
-			ENDCG
-		}
-
-		CGPROGRAM
-		#pragma surface Surface Standard fullforwardshadows
-
-		#pragma target 5.0
-		#pragma shader_feature_local _EMISSION_ON
-
-		struct Input
-		{
-			float2 uv_Albedo;
-			float4 screenPos;
-		};
-
-		half _Smoothness;
-		half _Metallic;
-		fixed4 _EmissionColor;
-
-		void Surface(Input input, inout SurfaceOutputStandard output)
-		{
-			// NOTE: The else is required to avoid the following error:
-			// > Program 'frag_Surface', internal error: argument pulled into unrelated predicate.
-#if !_MASK_NONE
-			if (Clip(input.screenPos))
-			{
-				discard;
-			}
-			else
-#endif
-			{
-				fixed4 c = UNITY_SAMPLE_TEX2D(_Albedo, input.uv_Albedo) * _Color;
-				clip(c.a - _Cutoff);
-				output.Albedo = c.rgb;
-				output.Metallic = _Metallic;
-				output.Smoothness = _Smoothness;
-#if _EMISSION_ON
-				output.Emission = c.rgb * UNITY_SAMPLE_TEX2D(_Albedo, input.uv_Albedo).a * _EmissionColor;
-#endif
-				output.Alpha = c.a;
-			}
-
-		}
-		ENDCG
-	}
-	FallBack "Diffuse"
+        TEXTURE2D(_Albedo); SAMPLER(sampler_Albedo);
+        UNITY_DECLARE_SCREENSPACE_TEXTURE(_CrestOceanMaskTexture);
+        UNITY_DECLARE_SCREENSPACE_TEXTURE(_CrestWaterVolumeFrontFaceTexture);
+        UNITY_DECLARE_SCREENSPACE_TEXTURE(_CrestWaterVolumeBackFaceTexture);
+        UNITY_DECLARE_SCREENSPACE_TEXTURE(_FillTexture);
+        half4 _Color, _EmissionColor;
+        half _Smoothness, _Metallic, _Cutoff;
+        float4 _Albedo_ST;
+        half4 Albedo(Varyings i)
+        {
+            half4 c = SAMPLE_TEXTURE2D(_Albedo, sampler_Albedo, i.uv * _Albedo_ST.xy + _Albedo_ST.zw) * _Color;
+            clip(c.a - _Cutoff);
+            return c;
+        }
+        void ApplyMask(Varyings i)
+        {
+            float2 uv = i.screenPos.xy / i.screenPos.w;
+            #if defined(_MASK_MASKED)
+            float front = UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CrestWaterVolumeFrontFaceTexture, uv).r;
+            float back = UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CrestWaterVolumeBackFaceTexture, uv).r;
+            if ((front > 0 && front < i.positionCS.z) || (back > i.positionCS.z && back > 0) ||
+                UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CrestOceanMaskTexture, uv).r == 0) discard;
+            #elif defined(_MASK_FILL)
+            if (UNITY_SAMPLE_SCREENSPACE_TEXTURE(_FillTexture, uv).r == 0) discard;
+            #endif
+        }
+        half4 Frag(Varyings i) : SV_Target
+        {
+            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+            ApplyMask(i);
+            half4 c = Albedo(i);
+            half3 emission = 0;
+            #if defined(_EMISSION_ON)
+            emission = c.rgb * c.a * _EmissionColor.rgb;
+            #endif
+            half4 color = Shade(i, c, _Metallic, _Smoothness, emission);
+            color.rgb = MixFog(color.rgb, i.fog);
+            return color;
+        }
+        half4 FragDepth(Varyings i) : SV_Target
+        {
+            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+            ApplyMask(i); Albedo(i); return 0;
+        }
+        float3 _LightDirection, _LightPosition;
+        Varyings VertShadow(Attributes input)
+        {
+            Varyings o = Vert(input);
+            float3 direction = _LightDirection;
+            #if defined(_CASTING_PUNCTUAL_LIGHT_SHADOW)
+            direction = normalize(_LightPosition - o.positionWS);
+            #endif
+            o.positionCS = TransformWorldToHClip(ApplyShadowBias(o.positionWS, o.normalWS, direction));
+            o.positionCS.z = min(o.positionCS.z, UNITY_NEAR_CLIP_VALUE * o.positionCS.w);
+            return o;
+        }
+        half4 FragShadow(Varyings i) : SV_Target { Albedo(i); return 0; }
+        ENDHLSL
+        Pass
+        {
+            Name "Forward" Tags { "LightMode"="UniversalForwardOnly" }
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment Frag
+            #pragma multi_compile_fog
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            ENDHLSL
+        }
+        Pass
+        {
+            Name "DepthOnly" Tags { "LightMode"="DepthOnly" } ColorMask 0
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment FragDepth
+            ENDHLSL
+        }
+        Pass
+        {
+            Name "ShadowCaster" Tags { "LightMode"="ShadowCaster" } ColorMask 0
+            HLSLPROGRAM
+            #pragma vertex VertShadow
+            #pragma fragment FragShadow
+            #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
+            ENDHLSL
+        }
+    }
 }

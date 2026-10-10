@@ -149,7 +149,7 @@ namespace Crest
             CreateWaterObjects(_camViewpoint);
 
 #if UNITY_EDITOR
-            if (!OceanRenderer.Instance.OceanMaterial.IsKeywordEnabled("_PLANARREFLECTIONS_ON"))
+            if (OceanRenderer.Instance != null && OceanRenderer.Instance.OceanMaterial != null && !OceanRenderer.Instance.OceanMaterial.IsKeywordEnabled("_PLANARREFLECTIONS_ON"))
             {
                 Debug.LogWarning("Crest: Planar reflections are not enabled on the current ocean material and will not be visible.", this);
             }
@@ -277,7 +277,9 @@ namespace Crest
             ForceDistanceCulling(_farClipPlane);
 
             // We do not want the water plane when rendering planar reflections.
-            OceanRenderer.Instance.Root.gameObject.SetActive(false);
+            var waterRoot = OceanRenderer.Instance.Root.gameObject;
+            var waterWasActive = waterRoot.activeSelf;
+            waterRoot.SetActive(false);
 
             // Invert culling because view is mirrored
             bool oldCulling = GL.invertCulling;
@@ -293,17 +295,19 @@ namespace Crest
 
             try
             {
-                _camReflections.Render();
+                CrestRenderRequest.Render(_camReflections, _reflectionTexture, !_disableShadows);
             }
             finally
             {
+                // Restore even if a render request throws.
+                if (waterRoot != null) waterRoot.SetActive(waterWasActive);
                 // Restore global settings.
                 GL.invertCulling = oldCulling;
                 if (_disableShadows) QualitySettings.shadows = oldShadowQuality;
                 if (_disablePixelLights) QualitySettings.pixelLightCount = oldPixelLightCount;
             }
 
-            OceanRenderer.Instance.Root.gameObject.SetActive(true);
+
 
             // Remember this frame as last refreshed.
             Refreshed(Time.renderedFrameCount);

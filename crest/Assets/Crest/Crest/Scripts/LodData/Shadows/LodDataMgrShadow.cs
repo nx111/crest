@@ -96,7 +96,7 @@ namespace Crest
             var isShadowsDisabled = false;
 
             {
-                if (QualitySettings.shadows == ShadowQuality.Disable)
+                if (GraphicsSettings.currentRenderPipeline is UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset pipeline ? !pipeline.supportsMainLightShadows : QualitySettings.shadows == ShadowQuality.Disable)
                 {
                     isShadowsDisabled = true;
                 }
@@ -120,6 +120,7 @@ namespace Crest
         {
             base.Enable();
 
+            if (GraphicsSettings.currentRenderPipeline == null)
             {
                 Camera.onPreCull -= OnPreCullCamera;
                 Camera.onPreCull += OnPreCullCamera;
@@ -136,6 +137,7 @@ namespace Crest
 
             CleanUpShadowCommandBuffers();
 
+            if (GraphicsSettings.currentRenderPipeline == null)
             {
                 Camera.onPreCull -= OnPreCullCamera;
                 Camera.onPostRender -= OnPostRenderCamera;
@@ -360,6 +362,7 @@ namespace Crest
             BufCopyShadowMap = new CommandBuffer();
             BufCopyShadowMap.name = "Crest Shadow Data";
 
+            if (GraphicsSettings.currentRenderPipeline == null)
             {
                 // Call this regardless of rendering path as it has no negative consequences for forward.
                 SetUpDeferredShadows();
@@ -512,7 +515,7 @@ namespace Crest
                 }
 
                 // Set the target texture as to make sure we catch the 'pong' each frame
-                Shader.SetGlobalTexture(GetParamIdSampler(), _targets.Current);
+                buffer.SetGlobalTexture(GetParamIdSampler(), _targets.Current);
             }
         }
 

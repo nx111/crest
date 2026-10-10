@@ -7,15 +7,12 @@
 Shader "Hidden/Crest/Helpers/Utility"
 {
 	HLSLINCLUDE
+	#pragma target 4.5
 	#pragma vertex Vertex
 	#pragma fragment Fragment
 
-	#include "UnityCG.cginc"
+	#include "../URP/Core.hlsl"
 
-	#include "../BIRP/Core.hlsl"
-	#include "../BIRP/InputsDriven.hlsl"
-
-	#include "../../FullScreenTriangle.hlsl"
 
 	#include "../../OceanShaderHelpers.hlsl"
 
@@ -45,6 +42,7 @@ Shader "Hidden/Crest/Helpers/Utility"
 
 	SubShader
 	{
+		Tags { "RenderPipeline"="UniversalPipeline" }
 		Cull Off ZWrite On ZTest Always
 
 		Pass

@@ -16,7 +16,7 @@ Shader "Crest/Ocean Surface Alpha"
 
 	SubShader
 	{
-		Tags { "RenderType"="Transparent" "Queue"="Transparent" }
+		Tags { "RenderPipeline"="UniversalPipeline" "RenderType"="Transparent" "Queue"="Transparent" }
 
 		Pass
 		{
@@ -28,12 +28,13 @@ Shader "Crest/Ocean Surface Alpha"
 			// the ludicrously large value below seems to work in most of my tests.
 			Offset 0, -1000000
 
-			CGPROGRAM
-			#pragma vertex Vert
+			HLSLPROGRAM
+			#pragma target 4.5
+	#pragma vertex Vert
 			#pragma fragment Frag
 			#pragma multi_compile_fog
 
-			#include "UnityCG.cginc"
+			#include "Helpers/URP/Core.hlsl"
 
 			#include "OceanConstants.hlsl"
 			#include "OceanGlobals.hlsl"
@@ -140,7 +141,7 @@ Shader "Crest/Ocean Surface Alpha"
 
 				return col;
 			}
-			ENDCG
+			ENDHLSL
 		}
 	}
 }

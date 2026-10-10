@@ -324,6 +324,9 @@ namespace Crest
         }
 
         [RuntimeInitializeOnLoadMethod]
+#if UNITY_EDITOR
+        [UnityEditor.InitializeOnLoadMethod]
+#endif
         static void RunOnStart()
         {
             RenderPipelineManager.beginCameraRendering -= BeginCameraRendering;

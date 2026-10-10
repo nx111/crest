@@ -11,7 +11,13 @@
 // Samplers
 
 TEXTURE2D_X(_CameraDepthTexture); SAMPLER(sampler_CameraDepthTexture);
+#if defined(CREST_URP)
+UNITY_DECLARE_SCREENSPACE_TEXTURE(_CameraOpaqueTexture);
+#define _BackgroundTexture _CameraOpaqueTexture
+#define sampler_BackgroundTexture sampler_CameraOpaqueTexture
+#else
 UNITY_DECLARE_SCREENSPACE_TEXTURE(_BackgroundTexture);
+#endif
 
 half3 _CrestAmbientLighting;
 

@@ -6,13 +6,15 @@ Shader "Hidden/Crest/Water Volume Geometry"
 {
 	SubShader
 	{
-		CGINCLUDE
-		#pragma vertex Vert
+		Tags { "RenderPipeline"="UniversalPipeline" }
+		HLSLINCLUDE
+		#pragma target 4.5
+	#pragma vertex Vert
 		#pragma fragment Frag
 
 		// #pragma enable_d3d11_debug_symbols
 
-		#include "UnityCG.cginc"
+		#include "../../Helpers/URP/Core.hlsl"
 
 		struct Attributes
 		{
@@ -42,7 +44,7 @@ Shader "Hidden/Crest/Water Volume Geometry"
 		{
 			return 1.0;
 		}
-		ENDCG
+		ENDHLSL
 
 		Pass
 		{
@@ -57,8 +59,8 @@ Shader "Hidden/Crest/Water Volume Geometry"
 				Pass Replace
 			}
 
-			CGPROGRAM
-			ENDCG
+			HLSLPROGRAM
+			ENDHLSL
 		}
 
 		Pass
@@ -74,8 +76,8 @@ Shader "Hidden/Crest/Water Volume Geometry"
 				Pass Replace
 			}
 
-			CGPROGRAM
-			ENDCG
+			HLSLPROGRAM
+			ENDHLSL
 		}
 	}
 }

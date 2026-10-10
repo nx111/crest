@@ -71,6 +71,9 @@ void ApplyReflectionSky
 	half4 val = SAMPLE_TEXTURECUBE(_ReflectionCubemapOverride, sampler_ReflectionCubemapOverride, refl);
 	skyColour = val.rgb;
 #else
+#if defined(CREST_URP)
+    skyColour = GlossyEnvironmentReflection(refl, _Roughness, 1.0h);
+#else
 	Unity_GlossyEnvironmentData envData;
 	envData.roughness = _Roughness;
 	envData.reflUVW = refl;
@@ -91,6 +94,7 @@ void ApplyReflectionSky
 	#else
 	skyColour = probe0;
 	#endif
+#endif
 #endif
 
 #endif

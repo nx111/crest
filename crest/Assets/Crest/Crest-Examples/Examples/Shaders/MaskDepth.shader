@@ -12,13 +12,11 @@ Shader "Crest/Examples/Mask Depth"
         {
             Blend SrcAlpha OneMinusSrcAlpha
 
-            CGPROGRAM
+            HLSLPROGRAM
             #pragma vertex Vertex
             #pragma fragment Fragment
 
-            #include "UnityCG.cginc"
-
-            #include "../../../Crest/Shaders/Helpers/BIRP/Core.hlsl"
+            #include "../../../Crest/Shaders/Helpers/URP/Core.hlsl"
 
             struct Attributes
             {
@@ -53,7 +51,7 @@ Shader "Crest/Examples/Mask Depth"
                 i_depth = mask == 0.0 ? 1.0 : 0.0;
                 return 0.0;
             }
-            ENDCG
+            ENDHLSL
         }
     }
 }

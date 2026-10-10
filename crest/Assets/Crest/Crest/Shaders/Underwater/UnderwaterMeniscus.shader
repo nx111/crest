@@ -11,7 +11,7 @@ Shader "Crest/Underwater Meniscus"
 
 	SubShader
 	{
-		Tags{ "LightMode" = "ForwardBase" "Queue" = "Transparent" "IgnoreProjector" = "True" "RenderType" = "Transparent" }
+		Tags { "RenderPipeline"="UniversalPipeline" "LightMode" = "UniversalForwardOnly" "Queue" = "Transparent" "IgnoreProjector" = "True" "RenderType" = "Transparent" }
 
 		Pass
 		{
@@ -20,11 +20,12 @@ Shader "Crest/Underwater Meniscus"
 			//Blend SrcAlpha OneMinusSrcAlpha
 			Blend DstColor Zero
 
-			CGPROGRAM
-			#pragma vertex Vert
+			HLSLPROGRAM
+			#pragma target 4.5
+	#pragma vertex Vert
 			#pragma fragment Frag
 
-			#include "UnityCG.cginc"
+			#include "../Helpers/URP/Core.hlsl"
 
 			#include "../OceanGlobals.hlsl"
 			#include "../OceanInputsDriven.hlsl"
@@ -101,7 +102,7 @@ Shader "Crest/Underwater Meniscus"
 
 				o.foam_screenPos.yzw = ComputeScreenPos(o.positionCS).xyw;
 				o.foam_screenPos.x = 0.0;
-				o.grabPos = ComputeGrabScreenPos(o.positionCS);
+				o.grabPos = ComputeScreenPos(o.positionCS);
 
 				o.uv = input.uv;
 
@@ -115,7 +116,7 @@ Shader "Crest/Underwater Meniscus"
 				alpha = pow(smoothstep(0.5, 0.0, alpha), 0.5);
 				return half4(lerp((half3)1.0, col, alpha), alpha);
 			}
-			ENDCG
+			ENDHLSL
 		}
 	}
 }
