@@ -46,6 +46,7 @@ namespace Crest
                 public Camera camera;
                 public UnderwaterRenderer underwater;
                 public RenderTextureDescriptor descriptor;
+                public Matrix4x4 view, projection;
                 public TextureHandle color, depth, copy, opaque;
                 public bool effect;
             }
@@ -87,6 +88,9 @@ namespace Crest
                     data.camera = cameraData.camera;
                     data.underwater = underwater;
                     data.descriptor = descriptor;
+                    data.view = cameraData.GetViewMatrix();
+                    data.projection = GL.GetGPUProjectionMatrix(cameraData.GetProjectionMatrix(),
+                        !resources.isActiveTargetBackBuffer || cameraData.targetTexture != null);
                     data.effect = effect;
                     data.color = resources.activeColorTexture;
                     data.depth = resources.cameraDepthTexture;
@@ -121,9 +125,11 @@ namespace Crest
                             if (pass.camera == ocean.ViewCamera && ocean._lodDataShadow != null &&
                                 ocean._lodDataShadow.enabled && ocean._lodDataShadow.BufCopyShadowMap != null && LodDataMgrShadow.s_processData)
                                 ocean._lodDataShadow.BuildCommandBuffer(ocean, cmd);
+                            RestoreCamera(pass, cmd);
                             if (pass.underwater != null && pass.underwater.IsActive)
                                 pass.underwater.RecordURPMask(cmd, pass.camera, pass.descriptor);
                             BeforeSceneRendering?.Invoke(cmd, pass.camera, pass.descriptor);
+                            RestoreCamera(pass, cmd);
                         }
                         else if (pass.effect)
                         {
@@ -140,6 +146,14 @@ namespace Crest
                         }
                     });
                 }
+            }
+
+            static void RestoreCamera(PassData pass, CommandBuffer cmd)
+            {
+                // Explicit simulation draws change the legacy camera state and target viewport.
+                cmd.SetupCameraProperties(pass.camera);
+                RenderingUtils.SetViewAndProjectionMatrices(cmd, pass.view, pass.projection, true);
+                cmd.SetViewport(new Rect(0, 0, pass.descriptor.width, pass.descriptor.height));
             }
         }
     }
