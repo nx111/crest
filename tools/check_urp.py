@@ -61,10 +61,10 @@ manifest = json.loads((ROOT / "crest/Packages/manifest.json").read_text())
 if manifest["dependencies"].get("com.unity.render-pipelines.universal") != "17.6.0":
     errors.append("Expected the pinned URP 17.6.0 package")
 
-new_asset_roots = [ASSETS / "Crest/Crest/Scripts/URP", ASSETS / "Crest/Crest/Shaders/Helpers/URP"]
-new_assets = [ASSETS / "Crest/Crest/Scripts/Editor/CrestURPSetup.cs"]
+new_asset_roots = [ASSETS / "Crest/Crest/Scripts/URP", ASSETS / "Crest/Crest/Shaders/Helpers/URP", ASSETS / "CrestURPSettings"]
+new_assets = [ASSETS / "Crest/Crest/Scripts/Editor/CrestURPSetup.cs", ASSETS / "DefaultVolumeProfile.asset", ASSETS / "UniversalRenderPipelineGlobalSettings.asset"]
 for folder in new_asset_roots:
-    new_assets += [folder] + [p for p in folder.iterdir() if p.suffix in (".cs", ".hlsl")]
+    new_assets += [folder] + [p for p in folder.iterdir() if p.suffix in (".cs", ".hlsl", ".asset")]
 guids = set()
 for file in new_assets:
     meta = Path(str(file) + ".meta")

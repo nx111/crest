@@ -1,5 +1,5 @@
 > **urp branch — Unity 6000.6 / URP 17.6**
-> Independent source port using Render Graph. Headless Unity import and C# compilation passed locally on Unity 6000.6.2f1; GPU validation is pending.
+> Independent source port using Render Graph. The example project is configured for URP; local Unity 6000.6.2f1 import, C# compilation and D3D11 rendering smoke checks passed.
 > Start with [setup and local verification checklist](docs/URP-MIGRATION.md).
 
 <div align="center">
@@ -85,7 +85,7 @@ Full [documentation](https://crest.readthedocs.io/en/latest) is available online
 
 <hr><h3 align="center">REQUIREMENTS</h3><hr>
 
-* This branch: Unity 6000.6.0f1, URP 17.6.0, Render Graph enabled
+* This branch: Unity 6000.6.2f1, URP 17.6.0, Render Graph enabled; the example project includes its pipeline settings and converted materials
 * [Shader compilation target](https://docs.unity3d.com/Manual/SL-ShaderCompileTargets.html) 4.5 or above
 * *Crest* does **not** support OpenGL or WebGL backends
 

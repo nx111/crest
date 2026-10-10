@@ -6,15 +6,17 @@ Date: 2026-10-10. Base: `db0658ff0b2e93e4a9e28cc2867509658b0ecc00`.
 | --- | --- |
 | C# 9 syntax / conditional directives | 145 C# files × 4 configurations (Unity 6.0/6.6, Editor/Player); **0 errors** |
 | Shader source structure | 99 shader/HLSL/compute files; balanced preprocessor and shader-program blocks; **0 errors** |
-| Local shader includes | 185 references resolve; **0 missing files** |
+| Local shader includes | 184 references resolve; **0 missing files** |
 | Unsupported shader constructs | No active `GrabPass` or Surface Shader pragmas |
 | Assembly and package JSON | 6 assembly definitions plus manifest parse successfully; no duplicate assembly references |
-| New Unity assets | 7 new asset/folder entries have valid distinct stable metadata GUIDs |
+| New Unity assets | 12 new asset/folder entries have valid distinct stable metadata GUIDs |
 | Whitespace | `git diff --check` / staged equivalent: passed |
 | Unity headless import, pipeline creation and validation | **Passed locally with Unity 6000.6.2f1 / URP 17.6.0** |
 | Unity assembly/API binding | **Passed locally with Unity 6000.6.2f1** |
-| Unity shader compiler / variant builds | **Not run** |
-| Editor rendering / Windows / Android device | **Not run** |
+| Example asset conversion and pipeline validation | **Passed: 8 materials, 3 prefab assets; a repeated conversion made no further changes** |
+| Unity shader compiler | **Passed for exercised D3D11 variants and passes on 51 visible renderer materials** |
+| Editor GPU rendering | **Passed: 7 example scenes and 2 additional underwater frames** |
+| Full variant coverage / player builds / Android device | **Not run** |
 
 During handoff, the C# checker was compiled directly with the installed SDK's `csc.dll`
 and run against the source tree. The `dotnet run` restore bootstrap encountered a
@@ -33,16 +35,34 @@ A temporary project copy was imported with Unity 6000.6.2f1 in batch mode with
 exited with code 0. URP/Core remained at 17.6.0,
 while Unity automatically upgraded older dependencies, including Burst to 2.0.0,
 Mathematics to 1.4.0, Input System to 1.20.0 and Splines to 2.9.0. The committed
-manifest and editor target retain the handoff configuration. The exact 6000.6.0f1
-editor target, GPU shader variants, player builds and device rendering remain untested.
+example project now records these resolved package versions and targets 6000.6.2f1.
+The handoff's exact 6000.6.0f1 editor target, player builds and device rendering remain untested.
 
 Manual source review covered the new URP API calls against Unity's official URP
 17.6 source, render pass ordering, camera filters, color-copy lifetime, texture
 imports, MSAA descriptor handling, reflection state restoration, shader lighting
 and depth interfaces, and preservation of the existing simulation/query code.
 
-Source checks and headless editor checks do not establish visual correctness or
-shader variant coverage. Complete the [local validation checklist](URP-MIGRATION.md)
-before treating the port as visually tested. The upstream example materials still
-require local Unity material conversion. Generated pipeline assets were created
-only in the validation copy.
+The example update was additionally checked in a temporary project copy with a
+Play Mode rendering test on D3D11, outside batch mode so Crest creates its ocean
+tiles. The test loaded `boat`, `BoatWakes`, `threeboats`, `Examples`, `LakesAndRivers`,
+`main` and `whirlpool`; compiled all passes on 51 visible renderer materials;
+and rendered 960 x 540 images using `UniversalRenderPipeline.SingleCameraRequest`
+after simulation updates. The main scene was also rendered underwater with
+`EnableShaderAPI` off and on. Assertions checked active ocean tiles, URP camera
+data, material shaders, image variation and error-shader pixels. The test passed
+with editor exit code 0; the final log contained no shader errors, runtime
+exceptions or shadow render-data order warnings. Nine captures were inspected.
+
+These checks exposed and verified fixes for mismatched shadow helper signatures
+on D3D11 and camera state changed by explicit simulation draws, which had
+corrupted the main scene and underwater mask. The renderer now restores camera
+properties, URP view/projection matrices and the camera viewport around those draws.
+
+The smoke checks cover basic rendering and exercised variants. Complete the
+[local validation checklist](URP-MIGRATION.md) for full visual and device regression.
+The generated pipeline and global settings
+assets are included in the example project and assigned in Graphics and all quality
+levels. Converted example materials retain their asset GUIDs. Built-in default
+material references in boat prefabs use URP materials; the shared base camera includes
+URP camera data with MSAA disabled.
