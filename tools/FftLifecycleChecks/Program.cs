@@ -25,6 +25,18 @@ static class Program
             ("Release then a later time initializes the newly allocated spectrum", ReleasedLaterTime),
             ("CleanUpAll then a paused-time request recreates a valid wave texture", CleanupSameTime),
             ("changed conditions at a paused time rebuild the spectrum", ChangedConditions),
+            ("exchanging wind speed and turbulence cannot alias FFT conditions", DistinctConditions),
+            ("identical public requests share one generator and dispatch", SharedConditions),
+            ("different spectrum objects keep independent FFT data", DistinctSpectra),
+            ("unchanged-condition notification preserves the existing output", UnchangedConditions),
+            ("merging conditions preserves live outputs and final resource ownership", MergedConditions),
+            ("a later shape cannot overwrite an earlier shape's output this frame", SameFrameConsumers),
+            ("an unused previous-frame generator can be repurposed at a paused time", ReuseIdleGenerator),
+            ("repeated merging and diverging conditions reuse two texture sets", RepeatedConditionChanges),
+            ("spare selection never rewrites any generator already used this frame", ProtectAllFrameConsumers),
+            ("spare selection preserves incompatible resolution and loop caches", PreserveIncompatibleSpare),
+            ("global cleanup clears generator ownership as well as all textures", CleanupOwnership),
+            ("subsystem reset releases live generators before clearing the cache", SubsystemReset),
         };
         foreach (var field in new[] { "_spectrumInit", "_spectrumHeight", "_spectrumDisplaceX", "_spectrumDisplaceZ",
                                       "_tempFFT1", "_tempFFT2", "_tempFFT3", "_waveBuffers" })
@@ -42,6 +54,7 @@ static class Program
         {
             FFTCompute.CleanUpAll();
             typeof(FFTCompute).GetMethod("InitStatics", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            OceanRenderer.FrameCount = 0;
             try { test.run(); Console.WriteLine("PASS: " + test.name); }
             catch (Exception exception)
             {
@@ -112,6 +125,180 @@ static class Program
         var result = FFTCompute.GenerateDisplacements(command, 16, -1f, .2f, 0f, 11f, 2f, spectrum, false);
         Check(result != null && command.Dispatches.Count == 4, "updated conditions did not bypass cached time");
         Check(command.FloatParams[FFTCompute.ShaderIDs.s_WindSpeed] == 11f, "new wind speed was not bound to initialization");
+    }
+
+    static RenderTexture GenerateConditions(CommandBuffer command, OceanWaveSpectrum spectrum, float speed = 10f, float turbulence = .2f)
+        => FFTCompute.GenerateDisplacements(command, 16, -1f, turbulence, 0f, speed, 2f, spectrum, false);
+
+    static void ChangeConditions(OceanWaveSpectrum spectrum, float oldSpeed, float newSpeed)
+        => FFTCompute.OnGenerationDataUpdated(16, -1f, .2f, 0f, oldSpeed, spectrum, .2f, 0f, newSpeed, spectrum);
+
+    static Object[] OwnedTextures(RenderTexture output)
+    {
+        var generators = (System.Collections.IDictionary)typeof(FFTCompute)
+            .GetField("_generators", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+        foreach (FFTCompute generator in generators.Values)
+        {
+            if (!ReferenceEquals(typeof(FFTCompute).GetField("_waveBuffers", Private).GetValue(generator), output)) continue;
+            var textures = typeof(FFTCompute).GetFields(Private)
+                .Where(field => typeof(Texture).IsAssignableFrom(field.FieldType))
+                .Select(field => (Object)field.GetValue(generator)).ToArray();
+            Check(textures.Length == 10 && textures.All(texture => texture != null), "expected eight RTs and two control textures");
+            return textures;
+        }
+        throw new Exception("output has no cached resource owner");
+    }
+
+    static void DistinctConditions()
+    {
+        // Use the actual production Hashy.cs, including when testing an old ref.
+        var firstHash = Hashy.CreateHash(); var secondHash = Hashy.CreateHash();
+        Hashy.AddFloat(.2f, ref firstHash); Hashy.AddFloat(.75f, ref firstHash);
+        Hashy.AddFloat(.75f, ref secondHash); Hashy.AddFloat(.2f, ref secondHash);
+        Check(firstHash == secondHash, "negative-control precondition: legacy XOR keys must collide");
+
+        var command = new CommandBuffer(); var spectrum = new OceanWaveSpectrum();
+        var first = GenerateConditions(command, spectrum, .75f, .2f);
+        var second = GenerateConditions(command, spectrum, .2f, .75f);
+        Check(!ReferenceEquals(first, second), "different valid wind conditions reused the same output");
+        Check(FFTCompute.GeneratorCount == 2 && command.Dispatches.Count == 8, "second condition was never initialized");
+        Check(command.FloatParams[FFTCompute.ShaderIDs.s_WindSpeed] == .2f
+            && command.FloatParams[FFTCompute.ShaderIDs.s_Turbulence] == .75f, "incorrect second spectrum parameters");
+    }
+
+    static void SharedConditions()
+    {
+        var command = new CommandBuffer(); var spectrum = new OceanWaveSpectrum();
+        var first = GenerateConditions(command, spectrum);
+        var second = GenerateConditions(command, spectrum);
+        Check(ReferenceEquals(first, second) && FFTCompute.GeneratorCount == 1 && command.Dispatches.Count == 4,
+            "identical consumers should share one generated result");
+    }
+
+    static void DistinctSpectra()
+    {
+        var command = new CommandBuffer();
+        var first = GenerateConditions(command, new OceanWaveSpectrum());
+        var second = GenerateConditions(command, new OceanWaveSpectrum());
+        Check(!ReferenceEquals(first, second) && FFTCompute.GeneratorCount == 2 && command.Dispatches.Count == 8,
+            "separate spectrum assets shared an output");
+    }
+
+    static void UnchangedConditions()
+    {
+        var command = new CommandBuffer(); var spectrum = new OceanWaveSpectrum();
+        var first = GenerateConditions(command, spectrum); command.Clear();
+        ChangeConditions(spectrum, 10f, 10f);
+        var second = GenerateConditions(command, spectrum);
+        Check(ReferenceEquals(first, second) && command.Dispatches.Count == 0, "a no-op notification evicted the live generator");
+    }
+
+    static void MergedConditions()
+    {
+        var command = new CommandBuffer(); var spectrum = new OceanWaveSpectrum();
+        var first = GenerateConditions(command, spectrum, 10f);
+        var firstTextures = OwnedTextures(first);
+        var second = GenerateConditions(command, spectrum, 11f);
+        var secondTextures = OwnedTextures(second);
+        ChangeConditions(spectrum, 10f, 11f);
+        Check(firstTextures.Concat(secondTextures).All(texture => !texture.Destroyed),
+            "condition merge destroyed a texture that a recorded command can still reference");
+        FFTCompute.CleanUpAll();
+        Check(firstTextures.Concat(secondTextures).All(texture => texture.Destroyed),
+            "merging into an existing generator orphaned old textures at final cleanup");
+    }
+
+    static void SameFrameConsumers()
+    {
+        var command = new CommandBuffer(); var spectrum = new OceanWaveSpectrum();
+        var first = GenerateConditions(command, spectrum, 10f);
+        ChangeConditions(spectrum, 10f, 11f);
+        var second = GenerateConditions(command, spectrum, 11f);
+        Check(!ReferenceEquals(first, second), "second shape rewrote the first shape's texture before animated-wave draws");
+        Check(command.Outputs.Count == 2 && ReferenceEquals(command.Outputs[0], first)
+            && ReferenceEquals(command.Outputs[1], second), "recorded FFT writes did not retain independent outputs");
+        command.Clear();
+        Check(ReferenceEquals(first, GenerateConditions(command, spectrum, 10f)) && command.Dispatches.Count == 0,
+            "another consumer of the original conditions lost its already generated texture");
+    }
+
+    static void ReuseIdleGenerator()
+    {
+        var command = new CommandBuffer(); var spectrum = new OceanWaveSpectrum();
+        var first = GenerateConditions(command, spectrum, 10f); command.Clear();
+        OceanRenderer.FrameCount++;
+        ChangeConditions(spectrum, 10f, 11f);
+        var second = GenerateConditions(command, spectrum, 11f);
+        Check(ReferenceEquals(first, second) && FFTCompute.GeneratorCount == 1, "an idle generator was needlessly allocated again");
+        Check(command.Dispatches.Count == 4 && command.FloatParams[FFTCompute.ShaderIDs.s_WindSpeed] == 11f,
+            "reused storage did not initialize the new spectrum at paused time");
+    }
+
+    static void CleanupOwnership()
+    {
+        var output = GenerateConditions(new CommandBuffer(), new OceanWaveSpectrum());
+        var textures = OwnedTextures(output);
+        FFTCompute.CleanUpAll();
+        Check(textures.All(texture => texture.Destroyed), "cleanup left owned textures alive");
+        Check(FFTCompute.GeneratorCount == 0, "cleanup retained obsolete generators and spectrum references");
+    }
+
+    static void RepeatedConditionChanges()
+    {
+        var command = new CommandBuffer(); var spectrum = new OceanWaveSpectrum();
+        var oldA = 10f; var oldB = 11f;
+        GenerateConditions(command, spectrum, oldA);
+        GenerateConditions(command, spectrum, oldB);
+        for (var frame = 1; frame <= 120; frame++)
+        {
+            OceanRenderer.FrameCount = frame;
+            command.Clear();
+            var newA = oldB; var newB = oldB + 1f;
+            ChangeConditions(spectrum, oldA, newA);
+            var first = GenerateConditions(command, spectrum, newA);
+            ChangeConditions(spectrum, oldB, newB);
+            var second = GenerateConditions(command, spectrum, newB);
+            Check(!ReferenceEquals(first, second), "merging/diverging shapes overwrote each other at frame " + frame);
+            Check(FFTCompute.GeneratorCount == 2, "two active conditions retained " + FFTCompute.GeneratorCount + " texture sets at frame " + frame);
+            oldA = newA; oldB = newB;
+        }
+    }
+
+    static void ProtectAllFrameConsumers()
+    {
+        var command = new CommandBuffer(); var spectrum = new OceanWaveSpectrum();
+        var first = GenerateConditions(command, spectrum, 10f);
+        var second = GenerateConditions(command, spectrum, 11f);
+        ChangeConditions(spectrum, 11f, 12f);
+        var third = GenerateConditions(command, spectrum, 12f);
+        Check(!ReferenceEquals(first, third) && !ReferenceEquals(second, third) && FFTCompute.GeneratorCount == 3,
+            "spare search reused another live frame consumer");
+    }
+
+    static void PreserveIncompatibleSpare()
+    {
+        var command = new CommandBuffer(); var spectrum = new OceanWaveSpectrum();
+        var differentSize = FFTCompute.GenerateDisplacements(command, 32, -1f, .2f, 0f, 10f, 2f, spectrum, false);
+        var differentPeriod = FFTCompute.GenerateDisplacements(command, 16, 8f, .2f, 0f, 10f, 2f, spectrum, false);
+        OceanRenderer.FrameCount++;
+        GenerateConditions(command, spectrum, 10f);
+        ChangeConditions(spectrum, 10f, 11f);
+        var changed = GenerateConditions(command, spectrum, 11f);
+        Check(!ReferenceEquals(changed, differentSize) && !ReferenceEquals(changed, differentPeriod), "retuned incompatible texture storage");
+        command.Clear();
+        Check(ReferenceEquals(differentSize, FFTCompute.GenerateDisplacements(command, 32, -1f, .2f, 0f, 10f, 2f, spectrum, false))
+            && ReferenceEquals(differentPeriod, FFTCompute.GenerateDisplacements(command, 16, 8f, .2f, 0f, 10f, 2f, spectrum, false)),
+            "spare search discarded incompatible cached conditions");
+        Check(command.Dispatches.Count == 0, "incompatible caches were needlessly regenerated");
+    }
+
+    static void SubsystemReset()
+    {
+        var output = GenerateConditions(new CommandBuffer(), new OceanWaveSpectrum());
+        var textures = OwnedTextures(output);
+        typeof(FFTCompute).GetMethod("InitStatics", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+        Check(textures.All(texture => texture.Destroyed), "subsystem reset discarded live resource owners without cleanup");
+        Check(FFTCompute.GeneratorCount == 0, "subsystem reset retained cached generators");
     }
     static void LostTexture(string field)
     {
@@ -242,7 +429,8 @@ namespace UnityEngine.Rendering
     {
         public readonly List<(string shader, string kernel)> Dispatches = new List<(string, string)>();
         public readonly Dictionary<int, float> FloatParams = new Dictionary<int, float>();
-        public void Clear() { Dispatches.Clear(); FloatParams.Clear(); }
+        public readonly List<Texture> Outputs = new List<Texture>();
+        public void Clear() { Dispatches.Clear(); FloatParams.Clear(); Outputs.Clear(); }
         public void SetComputeIntParam(ComputeShader shader, int id, int value) { }
         public void SetComputeFloatParam(ComputeShader shader, int id, float value) => FloatParams[id] = value;
         public void SetComputeVectorParam(ComputeShader shader, int id, Vector2 value) { }
@@ -250,13 +438,14 @@ namespace UnityEngine.Rendering
         {
             if (texture == null || texture is RenderTexture target && !target.IsCreated())
                 throw new Exception("bound a missing or released texture");
+            if (id == FFTCompute.ShaderIDs.s_Output) Outputs.Add(texture);
         }
         public void DispatchCompute(ComputeShader shader, int kernel, int x, int y, int z) => Dispatches.Add((shader.name, shader.KernelName(kernel)));
     }
 }
 namespace Crest
 {
-    public class OceanRenderer { public static OceanRenderer Instance = new OceanRenderer(); public float Gravity = 9.81f; }
+    public class OceanRenderer { public static OceanRenderer Instance = new OceanRenderer(); public static int FrameCount; public float Gravity = 9.81f; }
     public class OceanWaveSpectrum : Object
     {
         public const int NUM_OCTAVES = 14;
@@ -272,13 +461,6 @@ namespace Crest
         { if (texture == null) texture = new RenderTexture(descriptor); else texture.descriptor = descriptor; }
         public static UnityEngine.Experimental.Rendering.GraphicsFormat GetCompatibleTextureFormat(
             UnityEngine.Experimental.Rendering.GraphicsFormat format, int usage, string label, bool randomWrite) => format;
-    }
-    public static class Hashy
-    {
-        public static int CreateHash() => 17;
-        public static void AddInt(int value, ref int hash) => hash = unchecked(hash * 31 + value);
-        public static void AddFloat(float value, ref int hash) => AddInt(value.GetHashCode(), ref hash);
-        public static void AddObject(Object value, ref int hash) => AddInt(value.GetHashCode(), ref hash);
     }
     public static class OceanDebugGUI { public static void DrawTextureArray(Texture texture, int x, float scale, float y) { } }
 }

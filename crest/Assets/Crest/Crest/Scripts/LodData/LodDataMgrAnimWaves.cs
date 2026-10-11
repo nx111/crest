@@ -43,6 +43,11 @@ namespace Crest
         RenderTexture _waveBuffers;
         RenderTexture _combineBuffer;
 
+        internal override bool AreTexturesCreated()
+            => base.AreTexturesCreated()
+            && _waveBuffers != null && _waveBuffers.IsCreated()
+            && _combineBuffer != null && _combineBuffer.IsCreated();
+
         const string ShaderName = "ShapeCombine";
 
         int krnl_ShapeCombine = -1;

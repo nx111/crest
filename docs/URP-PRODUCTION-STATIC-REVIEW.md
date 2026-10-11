@@ -268,13 +268,13 @@ The previous RHalf foam lifetime drift and Android frame-budget findings remain
 open. Artistic changes to scattering, foam amount, reflection roughness and scene
 quality settings are outside this static pass.
 
-One separate source-level lifecycle candidate remains in
-`FFTCompute.OnGenerationDataUpdated`: when the target cache key already exists,
-the previous generator can be removed without a clear resource-retirement owner.
-An immediate release may invalidate textures already referenced by the frame's
-recorded commands. A follow-up should define when retired shared generators are
-safe to reclaim before adding a cleanup path; this patch does not introduce an
-unproven immediate release there.
+The separate `FFTCompute.OnGenerationDataUpdated` ownership candidate identified
+here is addressed in the subsequent
+[simulation and resource lifecycle review](URP-SIMULATION-LIFECYCLE-REVIEW.md).
+That continuation retains ownership when conditions merge, protects outputs already
+used in the current frame, reuses compatible idle storage and releases the cache
+at final cleanup. It also fixes condition-key collisions. Its new offline results
+are recorded separately and do not change the device-validation limits above.
 
 No exhaustive claim is made about every Crest code path. The fixes and checks
 above are bounded, reproducible source findings, with device validation deferred.

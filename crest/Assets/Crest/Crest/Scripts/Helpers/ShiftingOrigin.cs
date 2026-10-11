@@ -19,6 +19,7 @@
 // pops will occur. Example - set teleport radius to 16384m, and set normal map scale to 16m which divides evenly into the teleport radius.
 
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 
@@ -329,17 +330,24 @@ namespace Crest
                 _originOffset -= newOrigin;
                 Shader.SetGlobalVector(sp_CrestFloatingOriginOffset, _originOffset);
 
+                var shifted = new HashSet<IShiftingOrigin>();
                 var fos = OceanRenderer.Instance.GetComponentsInChildren<IShiftingOrigin>();
                 foreach (var fo in fos)
                 {
-                    fo.SetOrigin(newOrigin);
+                    if (fo != null && shifted.Add(fo))
+                    {
+                        fo.SetOrigin(newOrigin);
+                    }
                 }
 
                 // Gerstner components
                 var gerstners = _overrideGerstnerList != null && _overrideGerstnerList.Length > 0 ? _overrideGerstnerList : Helpers.FindObjectsByType<ShapeGerstnerBatched>();
                 foreach (var gerstner in gerstners)
                 {
-                    gerstner.SetOrigin(newOrigin);
+                    if (gerstner != null && shifted.Add(gerstner))
+                    {
+                        gerstner.SetOrigin(newOrigin);
+                    }
                 }
             }
         }

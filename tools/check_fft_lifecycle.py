@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Execute production FFTCompute.cs against managed resource/command substitutes.
 
-These checks cover cache invalidation and required spectrum dispatches. They do
-not execute FFT mathematics, Unity APIs, shaders, or a GPU. Use --ref to run the
-identical tests against a previous source revision without changing the checkout.
+These checks cover cache identity, ownership, invalidation and required spectrum
+dispatches. They do not execute FFT mathematics, Unity APIs, shaders, or a GPU.
+Use --ref to run identical tests against a previous source revision, including
+its actual Hashy implementation, without changing the checkout.
 """
 
 import argparse
@@ -23,12 +24,14 @@ def main():
         parser.error(".NET 10 SDK not found; pass --dotnet /path/to/dotnet")
 
     root = Path(__file__).resolve().parents[1]
-    path = "crest/Assets/Crest/Crest/Scripts/Shapes/FFT/FFTCompute.cs"
-    source = (subprocess.check_output(["git", "show", f"{args.ref}:{path}"], cwd=root)
-              if args.ref else (root / path).read_bytes())
+    paths = ["crest/Assets/Crest/Crest/Scripts/Shapes/FFT/FFTCompute.cs",
+             "crest/Assets/Crest/Crest/Scripts/Helpers/Hashy.cs"]
     with tempfile.TemporaryDirectory(prefix="crest-fft-lifecycle-") as folder:
         project = Path(folder)
-        (project / "FFTCompute.cs").write_bytes(source)
+        for path in paths:
+            source = (subprocess.check_output(["git", "show", f"{args.ref}:{path}"], cwd=root)
+                      if args.ref else (root / path).read_bytes())
+            (project / Path(path).name).write_bytes(source)
         shutil.copyfile(root / "tools/FftLifecycleChecks/Program.cs", project / "Program.cs")
         (project / "FftLifecycleChecks.csproj").write_text(
             '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>'

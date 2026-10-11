@@ -127,6 +127,8 @@ namespace Crest
             }
         }
 
+        protected override System.Type SharedResourcesType => typeof(ShapeFFT);
+
         protected override void DestroySharedResources()
         {
             FFTCompute.CleanUpAll();

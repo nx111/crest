@@ -226,8 +226,15 @@ namespace Crest
             registrar.Remove(input);
 
             // Allow sorting within a queue. Callers can pass in things like sibling index to get deterministic sorting
-            int maxSubIndex = 1000;
-            int finalSortIndex = queueSortIndex * maxSubIndex + Mathf.Min(subSortIndex, maxSubIndex - 1);
+            const int maxSubIndex = 1000;
+            var subIndex = Mathf.Clamp(subSortIndex, 0, maxSubIndex - 1);
+            // Keep the global-wave sentinel ahead of every local input. Calculate
+            // in 64 bits so arbitrary user queues cannot wrap across the ordering.
+            var queueIndex = queueSortIndex == int.MinValue
+                ? int.MinValue
+                : Math.Max((long)int.MinValue + maxSubIndex,
+                    Math.Min((long)queueSortIndex * maxSubIndex, (long)int.MaxValue - (maxSubIndex - 1)));
+            int finalSortIndex = (int)(queueIndex + subIndex);
 
             registrar.Add(finalSortIndex, input);
         }

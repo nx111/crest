@@ -2,6 +2,7 @@
 
 // This file is subject to the MIT License as seen in the root of this folder structure (LICENSE)
 
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Crest.Spline;
@@ -100,6 +101,8 @@ namespace Crest
 
 
         protected Mesh _meshForDrawingWaves;
+        // Only this mesh belongs to the component. A renderer's sharedMesh is borrowed.
+        Mesh _splineMesh;
 
         protected virtual OceanWaveSpectrum DefaultSpectrum => WindSpectrum;
 
@@ -246,6 +249,11 @@ namespace Crest
         protected static readonly int sp_AxisX = Shader.PropertyToID("_AxisX");
 
         static int s_InstanceCount = 0;
+        static readonly Dictionary<System.Type, int> s_SharedResourceUsers = new Dictionary<System.Type, int>();
+        System.Type _registeredSharedResourcesType;
+
+        // Derived families which share resources must return the same key for all their subclasses.
+        protected virtual System.Type SharedResourcesType => GetType();
 
         protected bool UpdateDataEachFrame
         {
@@ -304,11 +312,24 @@ namespace Crest
                 var radius = _overrideSplineSettings ? _radius : _spline.Radius;
                 var subdivs = _overrideSplineSettings ? _subdivisions : _spline.Subdivisions;
                 if (ShapeGerstnerSplineHandling.GenerateMeshFromSpline<SplinePointDataWaves>(_spline, transform,
-                    subdivs, radius, Vector2.one, ref _meshForDrawingWaves, out _, out _, ref _splineBoundingPoints))
+                    subdivs, radius, Vector2.one, ref _splineMesh, out _, out _, ref _splineBoundingPoints)
+                    && _splineMesh != null)
                 {
-                    _meshForDrawingWaves.name = gameObject.name + "_mesh";
+                    _splineMesh.name = gameObject.name + "_mesh";
+                    _meshForDrawingWaves = _splineMesh;
+                    _firstUpdate = true;
+                    return;
                 }
             }
+
+            if (_spline != null || _meshForDrawingWaves == _splineMesh)
+            {
+                _meshForDrawingWaves = null;
+            }
+            Helpers.Destroy(_splineMesh);
+            _splineMesh = null;
+            _splineBoundingPoints = new Vector3[0];
+            _firstUpdate = true;
         }
 
         void InitBatches()
@@ -363,6 +384,9 @@ namespace Crest
                 _matGenerateWaves = _matGenerateWavesGlobal;
             }
 
+            // An invalid spline must not fall through to a full-screen wave draw.
+            if (_spline != null && _meshForDrawingWaves == null) return;
+
             // Submit draws to create the FFT waves
             for (int i = _firstCascade; i <= _lastCascade; i++)
             {
@@ -384,19 +408,45 @@ namespace Crest
         void Awake()
         {
             s_InstanceCount++;
+            _registeredSharedResourcesType = SharedResourcesType;
+            s_SharedResourceUsers.TryGetValue(_registeredSharedResourcesType, out var users);
+            s_SharedResourceUsers[_registeredSharedResourcesType] = users + 1;
             CreateOrUpdateSplineMesh();
         }
 
         void OnDestroy()
         {
-            // Since FFTCompute resources are shared we will clear after last ShapeFFT is destroyed.
+            Helpers.Destroy(_matGenerateWavesGlobal);
+            Helpers.Destroy(_matGenerateWavesGeometry);
+            Helpers.Destroy(_splineMesh);
+            _matGenerateWavesGlobal = null;
+            _matGenerateWavesGeometry = null;
+            _matGenerateWaves = null;
+            _splineMesh = null;
+            _meshForDrawingWaves = null;
+
+            // A mixed FFT/Gerstner scene must clean up both resource families,
+            // regardless of which kind of component happens to be destroyed last.
+            if (_registeredSharedResourcesType == null) return;
+            var resourceType = _registeredSharedResourcesType;
+            _registeredSharedResourcesType = null;
+            if (s_SharedResourceUsers[resourceType] == 1)
+            {
+                s_SharedResourceUsers.Remove(resourceType);
+                DestroySharedResources();
+            }
+            else
+            {
+                s_SharedResourceUsers[resourceType]--;
+            }
+
+            // The default wind spectrum is shared by all wave families.
             if (--s_InstanceCount <= 0)
             {
-                DestroySharedResources();
-
                 if (s_WindSpectrum != null)
                 {
                     Helpers.Destroy(s_WindSpectrum);
+                    s_WindSpectrum = null;
                 }
             }
         }

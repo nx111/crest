@@ -52,6 +52,7 @@ namespace Crest
 
 
         protected override OceanWaveSpectrum DefaultSpectrum => _swell ? SwellSpectrum : WindSpectrum;
+        protected override System.Type SharedResourcesType => typeof(ShapeGerstner);
         static OceanWaveSpectrum s_SwellSpectrum;
         public static OceanWaveSpectrum SwellSpectrum
         {

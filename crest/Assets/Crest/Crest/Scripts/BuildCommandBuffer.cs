@@ -94,6 +94,12 @@ namespace Crest
             }
         }
 
+        public void CleanUp()
+        {
+            _buf?.Release();
+            _buf = null;
+        }
+
         /// <summary>
         /// Construct the command buffer and attach it to the camera so that it will be executed in the render.
         /// </summary>

@@ -18,6 +18,9 @@ namespace Crest
         RenderTexture _sources;
         PropertyWrapperCompute _renderSimProperties;
 
+        internal override bool AreTexturesCreated()
+            => base.AreTexturesCreated() && _sources != null && _sources.IsCreated();
+
         readonly int sp_LD_TexArray_Target = Shader.PropertyToID("_LD_TexArray_Target");
 
         protected ComputeShader _shader;
@@ -112,6 +115,9 @@ namespace Crest
             // Do a set of substeps to catch up
             GetSimSubstepData(_timeToSimulate, out var numSubsteps, out var substepDt);
 
+            // A rounded negative remainder must still run the zero-time reprojection
+            // below. Otherwise the buffer flip publishes a texture we did not update.
+            numSubsteps = Mathf.Max(numSubsteps, 0);
             LastUpdateSubstepCount = numSubsteps;
 
             // Even if no steps were needed this frame, the sim still needs to advect to compensate for camera motion / ocean scale changes,
@@ -129,7 +135,9 @@ namespace Crest
                 var isFirstStep = stepi == 0;
 
                 // Record how much we caught up
-                _timeToSimulate -= substepDt;
+                // Repeated float subtraction can leave a tiny negative remainder
+                // after an exact number of steps (for example 0.1s at 30 Hz).
+                _timeToSimulate = Mathf.Max(0f, _timeToSimulate - substepDt);
 
                 // Buffers are already flipped, but we need to ping-pong for subsequent substeps.
                 if (!isFirstStep)

@@ -60,6 +60,7 @@ namespace Crest
         OceanWaveSpectrum _spectrum;
 
         float _generationTime = float.NaN;
+        int _lastUsedFrame = -1;
 
         public static class ShaderIDs
         {
@@ -210,29 +211,66 @@ namespace Crest
                 generator.Value.Release();
                 generator.Value.CleanUp();
             }
+
+            _generators.Clear();
         }
 
-        static Dictionary<int, FFTCompute> _generators = new Dictionary<int, FFTCompute>();
+        // A hash alone is not a wave condition identity. In particular, XORing
+        // floats makes exchanging wind speed and turbulence produce the same key.
+        readonly struct WaveConditions : System.IEquatable<WaveConditions>
+        {
+            readonly int _resolution;
+            readonly float _loopPeriod;
+            readonly float _windTurbulence;
+            readonly float _windDirRad;
+            readonly float _windSpeed;
+            readonly OceanWaveSpectrum _spectrum;
+
+            public WaveConditions(int resolution, float loopPeriod, float windTurbulence, float windDirRad, float windSpeed, OceanWaveSpectrum spectrum)
+            {
+                _resolution = resolution;
+                _loopPeriod = loopPeriod;
+                _windTurbulence = windTurbulence;
+                _windDirRad = windDirRad;
+                _windSpeed = windSpeed;
+                _spectrum = spectrum;
+            }
+
+            public bool Equals(WaveConditions other)
+            {
+                return _resolution == other._resolution
+                    && _loopPeriod.Equals(other._loopPeriod)
+                    && _windTurbulence.Equals(other._windTurbulence)
+                    && _windDirRad.Equals(other._windDirRad)
+                    && _windSpeed.Equals(other._windSpeed)
+                    && ReferenceEquals(_spectrum, other._spectrum);
+            }
+
+            public override bool Equals(object obj) => obj is WaveConditions other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    var hash = _resolution;
+                    hash = hash * 397 ^ _loopPeriod.GetHashCode();
+                    hash = hash * 397 ^ _windTurbulence.GetHashCode();
+                    hash = hash * 397 ^ _windDirRad.GetHashCode();
+                    hash = hash * 397 ^ _windSpeed.GetHashCode();
+                    // Managed identity stays stable even after Unity destroys the
+                    // spectrum's native object. Do not use Unity's null operator.
+                    hash = hash * 397 ^ (ReferenceEquals(_spectrum, null) ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_spectrum));
+                    return hash;
+                }
+            }
+        }
+
+        static readonly Dictionary<WaveConditions, FFTCompute> _generators = new Dictionary<WaveConditions, FFTCompute>();
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         static void InitStatics()
         {
-            _generators.Clear();
-        }
-
-        static int CalculateWaveConditionsHash(int resolution, float loopPeriod, float windTurbulence, float windDirRad, float windSpeed, OceanWaveSpectrum spectrum)
-        {
-            var conditionsHash = Hashy.CreateHash();
-            Hashy.AddInt(resolution, ref conditionsHash);
-            Hashy.AddFloat(loopPeriod, ref conditionsHash);
-            Hashy.AddFloat(windSpeed, ref conditionsHash);
-            Hashy.AddFloat(windTurbulence, ref conditionsHash);
-            Hashy.AddFloat(windDirRad, ref conditionsHash);
-            if (spectrum != null)
-            {
-                Hashy.AddObject(spectrum, ref conditionsHash);
-            }
-            return conditionsHash;
+            CleanUpAll();
         }
 
         /// <summary>
@@ -240,14 +278,16 @@ namespace Crest
         /// </summary>
         public static RenderTexture GenerateDisplacements(CommandBuffer buf, int resolution, float loopPeriod, float windTurbulence, float windDirRad, float windSpeed, float time, OceanWaveSpectrum spectrum, bool updateSpectrum)
         {
-            // All static data arguments should be hashed here and passed to the generator constructor
-            var conditionsHash = CalculateWaveConditionsHash(resolution, loopPeriod, windTurbulence, windDirRad, windSpeed, spectrum);
-            if (!_generators.TryGetValue(conditionsHash, out var generator))
+            // All static data arguments belong in the key and generator constructor.
+            var conditions = new WaveConditions(resolution, loopPeriod, windTurbulence, windDirRad, windSpeed, spectrum);
+            if (!_generators.TryGetValue(conditions, out var generator))
             {
                 // No generator for these params - create one
                 generator = new FFTCompute(resolution, loopPeriod, windSpeed, windTurbulence, windDirRad, spectrum);
-                _generators.Add(conditionsHash, generator);
+                _generators.Add(conditions, generator);
             }
+
+            generator._lastUsedFrame = OceanRenderer.FrameCount;
 
             // The remaining dynamic data arguments should be passed in to the generation here
             return generator.GenerateDisplacementsInternal(buf, time, updateSpectrum);
@@ -298,50 +338,53 @@ namespace Crest
         /// <summary>
         /// Changing wave gen data can result in creating lots of new generators. This gives a way to notify
         /// that a parameter has changed. If there is no existing generator for the new param values, but there
-        /// is one for the old param values, this old generator is repurposed.
+        /// is a compatible generator which has not been used this frame, it is repurposed.
         /// </summary>
         public static void OnGenerationDataUpdated(int resolution, float loopPeriod,
             float windTurbulenceOld, float windDirRadOld, float windSpeedOld, OceanWaveSpectrum spectrumOld,
             float windTurbulenceNew, float windDirRadNew, float windSpeedNew, OceanWaveSpectrum spectrumNew)
         {
-            // If multiple wave components share one FFT, then one of them changes its settings, it will
-            // actually steal the generator from the rest. Then the first from the rest which request the
-            // old settings will trigger creation of a new generator, and the remaining ones will use this
-            // new generator. In the end one new generator is created, but it's created for the old settings.
-            // Generators are requested single threaded so there should not be a race condition. Odd pattern
-            // but I don't think any other way works without ugly checks to see if old generators are still
-            // used, or other complicated things.
-
-            // Check if no generator exists for new values
-            var newHash = CalculateWaveConditionsHash(resolution, loopPeriod, windTurbulenceNew, windDirRadNew, windSpeedNew, spectrumNew);
-            if (!_generators.TryGetValue(newHash, out _))
+            var oldConditions = new WaveConditions(resolution, loopPeriod, windTurbulenceOld, windDirRadOld, windSpeedOld, spectrumOld);
+            var newConditions = new WaveConditions(resolution, loopPeriod, windTurbulenceNew, windDirRadNew, windSpeedNew, spectrumNew);
+            if (oldConditions.Equals(newConditions) || _generators.ContainsKey(newConditions))
             {
-                // Try to adapt an existing generator rather than default to creating a new one
-                var oldHash = CalculateWaveConditionsHash(resolution, loopPeriod, windTurbulenceOld, windDirRadOld, windSpeedOld, spectrumOld);
-                if (_generators.TryGetValue(oldHash, out var generator))
+                // Keep ownership of the old generator: other shapes or recorded
+                // commands can still reference its textures. CleanUpAll releases it.
+                return;
+            }
+
+            var reusableConditions = oldConditions;
+            if (!_generators.TryGetValue(oldConditions, out var generator) || generator._lastUsedFrame == OceanRenderer.FrameCount)
+            {
+                generator = null;
+                // Merging shapes can leave a spare generator under an older key.
+                // Reuse that storage when the shapes diverge again, so animated
+                // conditions do not retain a new texture set on every frame.
+                foreach (var entry in _generators)
                 {
-                    // Hash will change for this generator, so remove the current one
-                    _generators.Remove(oldHash);
-
-                    // Update params
-                    generator._windTurbulence = windTurbulenceNew;
-                    generator._windDirRad = windDirRadNew;
-                    generator._windSpeed = windSpeedNew;
-                    generator._spectrum = spectrumNew;
-
-                    // Trigger generator to re-init the spectrum
-                    generator._spectrumInitialised = false;
-
-                    // Re-add with new hash
-                    _generators.Add(newHash, generator);
+                    var candidate = entry.Value;
+                    if (candidate._lastUsedFrame != OceanRenderer.FrameCount
+                        && candidate._resolution == resolution && candidate._loopPeriod.Equals(loopPeriod))
+                    {
+                        reusableConditions = entry.Key;
+                        generator = candidate;
+                        break;
+                    }
                 }
             }
-            else
+
+            if (generator != null)
             {
-                // There is already a new generator which will be used. Remove the previous one - if it really is needed
-                // then it will be created later.
-                var oldHash = CalculateWaveConditionsHash(resolution, loopPeriod, windTurbulenceOld, windDirRadOld, windSpeedOld, spectrumOld);
-                _generators.Remove(oldHash);
+                // Shape updates precede all animated-wave draws. Rewriting an FFT
+                // already used this frame would also change an earlier shape's
+                // material texture before its draw. Only reuse an idle generator.
+                _generators.Remove(reusableConditions);
+                generator._windTurbulence = windTurbulenceNew;
+                generator._windDirRad = windDirRadNew;
+                generator._windSpeed = windSpeedNew;
+                generator._spectrum = spectrumNew;
+                generator._spectrumInitialised = false;
+                _generators.Add(newConditions, generator);
             }
         }
 
@@ -468,7 +511,7 @@ namespace Crest
 
         public static void OnGUI(int resolution, float loopPeriod, float windTurbulence, float windDirRad, float windSpeed, OceanWaveSpectrum spectrum)
         {
-            _generators.TryGetValue(CalculateWaveConditionsHash(resolution, loopPeriod, windTurbulence, windDirRad, windSpeed, spectrum), out var generator);
+            _generators.TryGetValue(new WaveConditions(resolution, loopPeriod, windTurbulence, windDirRad, windSpeed, spectrum), out var generator);
             generator?.OnGUIInternal();
         }
 

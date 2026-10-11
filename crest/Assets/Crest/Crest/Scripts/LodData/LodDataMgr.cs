@@ -95,6 +95,19 @@ namespace Crest
         public virtual int BufferCount => 1;
         public virtual void FlipBuffers() => _targets.Flip();
 
+        // A texture object can survive losing its underlying GPU allocation.
+        // Rebuild the complete ocean before using any lost simulation history.
+        internal virtual bool AreTexturesCreated()
+        {
+            if (_targets == null) return false;
+            for (var frame = 0; frame < _targets.Size; frame++)
+            {
+                var target = _targets.Previous(frame);
+                if (target == null || !target.IsCreated()) return false;
+            }
+            return true;
+        }
+
         protected virtual Texture2DArray NullTexture => TextureArrayHelpers.BlackTextureArray;
 
         public static int sp_LD_SliceIndex = Shader.PropertyToID("_LD_SliceIndex");

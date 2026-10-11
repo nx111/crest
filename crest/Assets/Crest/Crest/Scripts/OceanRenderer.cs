@@ -473,6 +473,7 @@ namespace Crest
         public static OceanRenderer Instance { get; private set; }
 
         bool _isInitialized = false;
+        bool _isRebuilding;
 
         // A hash of the settings used to generate the ocean, used to regenerate when necessary
         int _generatedSettingsHash = 0;
@@ -578,6 +579,7 @@ namespace Crest
 
         BufferedData<CascadeParams[]> _cascadeParams;
         BufferedData<PerCascadeInstanceData[]> _perCascadeInstanceData;
+        bool _hasWrittenPerFrameData;
         public int BufferSize { get; private set; }
 
         // Drive state from OnEnable and OnDisable? OnEnable on RegisterLodDataInput seems to get called on script reload
@@ -591,16 +593,21 @@ namespace Crest
                 return;
             }
 
-            // Setup a default time provider, and add the override one (from the inspector)
-            _timeProviderStack.Clear();
-
-            // Put a base TP that should always be available as a fallback
-            PushTimeProvider(new TimeProviderDefault());
-
-            // Add the TP from the inspector
-            if (_timeProvider != null)
+            // A resource rebuild must retain runtime providers throughout
+            // initialization, including paused or network/cutscene clocks.
+            if (!_isRebuilding || _timeProviderStack.Count == 0)
             {
-                PushTimeProvider(_timeProvider);
+                // Setup a default time provider, and add the override one (from the inspector)
+                _timeProviderStack.Clear();
+
+                // Put a base TP that should always be available as a fallback
+                PushTimeProvider(new TimeProviderDefault());
+
+                // Add the TP from the inspector
+                if (_timeProvider != null)
+                {
+                    PushTimeProvider(_timeProvider);
+                }
             }
 
             if (!_primaryLight && _searchForPrimaryLightOnStartup)
@@ -657,6 +664,7 @@ namespace Crest
                 }
             }
 
+            _hasWrittenPerFrameData = false;
             _perCascadeInstanceData = new BufferedData<PerCascadeInstanceData[]>(BufferSize, () => new PerCascadeInstanceData[LodDataMgr.MAX_LOD_COUNT]);
             _bufPerCascadeInstanceData = new ComputeBuffer(_perCascadeInstanceData.Current.Length, UnsafeUtility.SizeOf<PerCascadeInstanceData>());
             Shader.SetGlobalBuffer(sp_perCascadeInstanceData, _bufPerCascadeInstanceData);
@@ -754,9 +762,18 @@ namespace Crest
 
         internal void Rebuild()
         {
-            CleanUp();
-            Disable();
-            OnEnable();
+            var wasRebuilding = _isRebuilding;
+            _isRebuilding = true;
+            try
+            {
+                CleanUp();
+                Disable();
+                OnEnable();
+            }
+            finally
+            {
+                _isRebuilding = wasRebuilding;
+            }
         }
 
         private void OnDisable()
@@ -1098,12 +1115,48 @@ namespace Crest
             return settingsHash;
         }
 
+        bool TryGetInvalidLodData(out LodDataMgr invalid)
+        {
+            foreach (var lodData in _lodDatas)
+            {
+                if (lodData.enabled && !lodData.AreTexturesCreated())
+                {
+                    invalid = lodData;
+                    return true;
+                }
+            }
+            invalid = null;
+            return false;
+        }
+
+        bool ValidateLodDataTextures()
+        {
+            // OnEnable can stop before any managers are created. An empty list
+            // alone cannot establish that recovery successfully initialized the ocean.
+            if (!enabled || !_isInitialized)
+            {
+                Debug.LogError("Crest: OceanRenderer could not initialize its simulation resources and has been disabled.", this);
+                enabled = false;
+                return false;
+            }
+
+            if (!TryGetInvalidLodData(out var invalid)) return true;
+
+            Debug.LogError($"Crest: Could not create the {invalid.SimName} simulation textures. OceanRenderer has been disabled to avoid using invalid GPU data.", this);
+            enabled = false;
+            return false;
+        }
+
         void RunUpdate()
         {
-            // Rebuild if needed. Needs to run in builds (for MVs at the very least).
-            if (CalculateSettingsHash() != _generatedSettingsHash)
+            // Restore the entire simulation together: persistent history, temporary
+            // textures, cascade data and cached clear state must agree after a loss.
+            if (CalculateSettingsHash() != _generatedSettingsHash || TryGetInvalidLodData(out _))
             {
                 Rebuild();
+                // One recovery attempt per update. A failed allocation must not keep
+                // rebuilding every frame or submit commands with invalid textures.
+                if (!ValidateLodDataTextures()) return;
             }
 
             BuildCommandBuffer.FlipDataBuffers(this);
@@ -1129,6 +1182,9 @@ namespace Crest
             }
 
             CreateDestroySubSystems();
+
+            // Newly enabled simulations have also attempted their initial allocation.
+            if (!ValidateLodDataTextures()) return;
 
             LateUpdateLods();
 
@@ -1208,11 +1264,24 @@ namespace Crest
 
             _cascadeParams.Flip();
             _lodTransform.WriteCascadeParams(_cascadeParams);
-            _bufCascadeDataTgt.SetData(_cascadeParams.Current);
-            _bufCascadeDataSrc.SetData(_cascadeParams.Previous(1));
 
             _perCascadeInstanceData.Flip();
             WritePerCascadeInstanceData(_perCascadeInstanceData);
+
+            if (!_hasWrittenPerFrameData)
+            {
+                // Fresh buffers have no previous frame. Seed every history slot with
+                // real transforms before any simulation can sample a zero-width LOD.
+                for (var frame = 1; frame < BufferSize; frame++)
+                {
+                    System.Array.Copy(_cascadeParams.Current, _cascadeParams.Previous(frame), _cascadeParams.Current.Length);
+                    System.Array.Copy(_perCascadeInstanceData.Current, _perCascadeInstanceData.Previous(frame), _perCascadeInstanceData.Current.Length);
+                }
+                _hasWrittenPerFrameData = true;
+            }
+
+            _bufCascadeDataTgt.SetData(_cascadeParams.Current);
+            _bufCascadeDataSrc.SetData(_cascadeParams.Previous(1));
             _bufPerCascadeInstanceData.SetData(_perCascadeInstanceData.Current);
             _bufPerCascadeInstanceDataSource.SetData(_perCascadeInstanceData.Previous(1));
         }
@@ -1551,6 +1620,9 @@ namespace Crest
 
         private void CleanUp()
         {
+            _commandbufferBuilder?.CleanUp();
+            _commandbufferBuilder = null;
+
             foreach (var lodData in _lodDatas)
             {
                 lodData.OnDisable();

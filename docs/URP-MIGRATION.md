@@ -48,6 +48,15 @@ It does not include the commercial Crest URP package.
   and offline results, including 250 selected DXC stages/variants. These production
   changes have no new Unity/device validation and do not inherit the earlier retest's
   visual or performance results.
+- **Latest simulation/resource static review (baseline `7a710032`):** fixes FFT
+  condition identity, safe shared-output reuse and final ownership, rounded
+  fixed-step pause history, same-settings texture loss/recovery, first-frame
+  cascade history, wave-family and spline resource ownership, input queue overflow,
+  duplicate floating-origin compensation and Portal/Volume depth-target changes.
+  Rebuilds preserve runtime time providers and release the old simulation command
+  buffer. See the [lifecycle review](URP-SIMULATION-LIFECYCLE-REVIEW.md) for old-version
+  counterexamples, allocation/recovery limits and reproduction commands. This
+  continuation changes C# production code and has offline verification only.
 - **Headless Unity import, C# API binding, pipeline creation, example asset conversion
   and configuration validation passed locally on Unity 6000.6.2f1 / URP 17.6.0.**
   The project includes the generated pipeline assets and converted example materials;

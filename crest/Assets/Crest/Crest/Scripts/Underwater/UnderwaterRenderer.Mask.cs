@@ -199,20 +199,21 @@ namespace Crest
 
         internal void SetUpVolumeTextures(RenderTextureDescriptor descriptor)
         {
-            if (!Helpers.RenderTargetTextureNeedsUpdating(_volumeFrontFaceRT, descriptor))
-            {
-                return;
-            }
-
             descriptor.msaaSamples = 1;
             descriptor.bindMS = false;
             descriptor.colorFormat = RenderTextureFormat.Depth;
             descriptor.depthBufferBits = 24;
 
-            _volumeFrontFaceRT.Release();
-            _volumeFrontFaceRT.descriptor = descriptor;
+            if (Helpers.RenderTargetTextureNeedsUpdating(_volumeFrontFaceRT, descriptor))
+            {
+                _volumeFrontFaceRT.Release();
+                _volumeFrontFaceRT.descriptor = descriptor;
+            }
 
-            if (_mode == Mode.Volume || _mode == Mode.VolumeFlyThrough)
+            // Portal does not configure the back target. It may still be a placeholder or have an older size when
+            // switching back to a volume, even if the front target already matches this camera's descriptor.
+            if ((_mode == Mode.Volume || _mode == Mode.VolumeFlyThrough)
+                && Helpers.RenderTargetTextureNeedsUpdating(_volumeBackFaceRT, descriptor))
             {
                 _volumeBackFaceRT.Release();
                 _volumeBackFaceRT.descriptor = descriptor;
