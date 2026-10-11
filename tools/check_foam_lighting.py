@@ -236,7 +236,7 @@ class FoamLighting(unittest.TestCase):
                 self.assertVector(actual, reference_light(n0, v0, UP) if weight else reference_light(n1, v1, UP))
             return actual * coverage
 
-        for reset in (1, 2, 3, 10):
+        for reset in (-10, -3, -2, -1, 0, 1, 2, 3, 10):
             sample(reset)
             self.assertVector(sample(reset - 1e-7), sample(reset + 1e-7), tolerance=2e-6)
 

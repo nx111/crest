@@ -129,15 +129,24 @@ def main():
                  CREST / "OceanSurfaceAlpha.shader", CREST / "Underwater/Resources/UnderwaterMask.shader"):
         add_shader(path, {"minimal": []})
     add_shader(CREST / "Resources/UpdateShadow.shader", {"minimal": [], "cascade": shadows, "screen-shadow": ["_MAIN_LIGHT_SHADOWS_SCREEN"]})
+    add_shader(CREST / "Resources/ShapeCombine.shader", {
+        "minimal": [], "flow": ["CREST_FLOW_ON_INTERNAL"],
+        "dynamic": ["CREST_DYNAMIC_WAVE_SIM_ON_INTERNAL"],
+        "flow-dynamic": ["CREST_FLOW_ON_INTERNAL", "CREST_DYNAMIC_WAVE_SIM_ON_INTERNAL"],
+    })
     for path in (inputs / "FoamAddFromTex.shader", inputs / "FoamAddFromVertCol.shader",
                  inputs / "Resources/FoamSplineGeometry.shader", inputs / "FoamOverride.shader"):
         add_shader(path, {"minimal": []})
-    for path in (CREST / "Resources/UpdateFoam.compute", CREST / "Resources/Gerstner.compute",
+    for path in (CREST / "Resources/UpdateFoam.compute", CREST / "Resources/UpdateDynWaves.compute",
+                 CREST / "Resources/ShapeCombine.compute", CREST / "Resources/Gerstner.compute",
                  CREST / "Resources/FFT/FFTSpectrum.compute", CREST / "Resources/FFT/FFTBake.compute"):
         compute_path = source_root / path
         program = compute_path.read_text(encoding="utf-8-sig")
-        for entry in re.findall(r"^#pragma\s+kernel\s+(\w+)\s*$", program, re.M):
-            cases.append((entry, program, compute_path.parent, "cs_6_0", entry, ["SHADER_STAGE_COMPUTE"]))
+        # Unity permits per-kernel defines after the entry point. Omitting these
+        # would skip the Flow/dynamic-wave branches in the combine compute path.
+        for entry, definitions in re.findall(r"^[ \t]*#pragma[ \t]+kernel[ \t]+(\w+)([^\r\n]*)", program, re.M):
+            keywords = definitions.split("//", 1)[0].split()
+            cases.append((entry, program, compute_path.parent, "cs_6_0", entry, ["SHADER_STAGE_COMPUTE"] + keywords))
 
     def compile_case(case):
         name, program, includes, profile, entry, keywords = case
@@ -148,7 +157,7 @@ def main():
                    "-D", "SHADER_API_D3D11=1", "-D", "SHADER_TARGET=45", "-D", "UNITY_VERSION=600062",
                    "-D", "UNITY_COMPILER_DXC=1"]
         for keyword in keywords:
-            command += ["-D", keyword + "=1"]
+            command += ["-D", keyword if "=" in keyword else keyword + "=1"]
         command += [str(source), "-Fo", str(output / (name + ".dxil"))]
         result = subprocess.run(command, capture_output=True, text=True)
         log = result.stdout + result.stderr

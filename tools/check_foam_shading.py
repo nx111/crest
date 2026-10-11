@@ -14,6 +14,7 @@ import sys
 import unittest
 
 import check_reflection_quality as shader
+from check_flow_sampling import flow_phase
 from check_optical_quality import Vector
 
 FOAM = shader.regression.CREST + "Shaders/OceanFoam.hlsl"
@@ -29,6 +30,7 @@ shader.FUNCTIONS.update({
     "float2": constructor, "half4": constructor, "fwidth": lambda _: 0,
     "ddx": lambda _: Vector((0, 0, 0)), "ddy": lambda _: Vector((0, 0, 0)),
     "fmod": math.fmod,
+    "CrestFlowPhase": flow_phase,
     "reflect": lambda incident, normal: incident - 2 * shader.dot(incident, normal) * normal,
     "CrestWhiteFoamCoverage": lambda amount, value: coverage(amount, value),
     "CrestBlendWhiteFoam": lambda first, second, weight: shader.shader_function(FOAM, "CrestBlendWhiteFoam", first, second, weight),
@@ -249,7 +251,7 @@ class FoamShading(unittest.TestCase):
 
             return composite(Vector((.1, .2, .3)), flow_blend(phase(values["sample1_offset"]), phase(values["sample2_offset"]), values["sample1_weight"]))
 
-        for reset in (1, 2, 3, 10):
+        for reset in (-10, -3, -2, -1, 0, 1, 2, 3, 10):
             self.assertVectorClose(sample(reset - 1e-6), sample(reset + 1e-6), tolerance=2e-6)
 
 

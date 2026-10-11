@@ -59,7 +59,7 @@ namespace Crest
         float _windDirRad;
         OceanWaveSpectrum _spectrum;
 
-        float _generationTime = -1f;
+        float _generationTime = float.NaN;
 
         public static class ShaderIDs
         {
@@ -118,6 +118,8 @@ namespace Crest
             }
 
             _isInitialised = false;
+            _spectrumInitialised = false;
+            _generationTime = float.NaN;
         }
 
         void InitializeTextures()
@@ -253,15 +255,17 @@ namespace Crest
 
         RenderTexture GenerateDisplacementsInternal(CommandBuffer buf, float time, bool updateSpectrum)
         {
-            // Check if already generated, and we're not being asked to re-update the spectrum
-            if (_generationTime == time && !updateSpectrum)
-            {
-                return _waveBuffers;
-            }
-
-            if (!_isInitialised || _spectrumHeight == null)
+            // A paused clock can request the same timestamp after an ocean rebuild
+            // or a lost render texture. Cached time alone cannot validate GPU data.
+            if (!TexturesAreValid())
             {
                 InitializeTextures();
+            }
+
+            // Check if already generated, and we're not being asked to re-update the spectrum
+            if (_generationTime == time && _spectrumInitialised && !updateSpectrum)
+            {
+                return _waveBuffers;
             }
 
             if (!_spectrumInitialised || updateSpectrum)
@@ -279,6 +283,17 @@ namespace Crest
 
             return _waveBuffers;
         }
+
+        bool TexturesAreValid()
+        {
+            return _isInitialised && _texButterfly != null && _texSpectrumControls != null
+                && IsCreated(_spectrumInit) && IsCreated(_spectrumHeight)
+                && IsCreated(_spectrumDisplaceX) && IsCreated(_spectrumDisplaceZ)
+                && IsCreated(_tempFFT1) && IsCreated(_tempFFT2) && IsCreated(_tempFFT3)
+                && IsCreated(_waveBuffers);
+        }
+
+        static bool IsCreated(RenderTexture texture) => texture != null && texture.IsCreated();
 
         /// <summary>
         /// Changing wave gen data can result in creating lots of new generators. This gives a way to notify

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute production QueryBase.cs with deterministic, managed Unity API substitutes.
+"""Execute production QueryBase and sampling helpers with managed Unity substitutes.
 
 Requires the .NET 10 SDK, but no Unity installation or NuGet packages. The substitutes
 model queued readbacks and expose their completion order; they do not execute GPU
@@ -17,22 +17,23 @@ import tempfile
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ref", help="read production QueryBase.cs from this git revision")
+    parser.add_argument("--ref", help="read production query/helper sources from this git revision")
     parser.add_argument("--dotnet", default=shutil.which("dotnet"), help="path to the .NET 10 SDK executable")
     args = parser.parse_args()
     if not args.dotnet:
         parser.error(".NET 10 SDK not found; pass --dotnet /path/to/dotnet")
 
     root = Path(__file__).resolve().parents[1]
-    source_path = "crest/Assets/Crest/Crest/Scripts/Collision/QueryBase.cs"
-    source = (
-        subprocess.check_output(["git", "show", f"{args.ref}:{source_path}"], cwd=root)
-        if args.ref else (root / source_path).read_bytes()
-    )
     dotnet = str(Path(args.dotnet).resolve())
     with tempfile.TemporaryDirectory(prefix="crest-query-lifecycle-") as folder:
         project = Path(folder)
-        (project / "QueryBase.cs").write_bytes(source)
+        for name in ("QueryBase.cs", "SamplingHelpers.cs", "CollProvider.cs", "FlowProvider.cs"):
+            source_path = "crest/Assets/Crest/Crest/Scripts/Collision/" + name
+            source = (
+                subprocess.check_output(["git", "show", f"{args.ref}:{source_path}"], cwd=root)
+                if args.ref else (root / source_path).read_bytes()
+            )
+            (project / name).write_bytes(source)
         shutil.copyfile(root / "tools/QueryLifecycleChecks/Program.cs", project / "Program.cs")
         (project / "QueryLifecycleChecks.csproj").write_text(
             '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>'
@@ -53,7 +54,7 @@ def main():
         if build.returncode:
             print(build.stdout, end="")
             return build.returncode
-        print(f"Production QueryBase: {args.ref or 'working tree'}", flush=True)
+        print(f"Production QueryBase and SamplingHelpers: {args.ref or 'working tree'}", flush=True)
         return subprocess.run(
             [dotnet, str(project / "bin/Debug/net10.0/QueryLifecycleChecks.dll")],
             cwd=project, env=env,

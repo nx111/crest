@@ -241,6 +241,37 @@ namespace Crest
             s_InstancesCount--;
         }
 
+        void OnDestroy()
+        {
+            // Disable keeps these objects for re-enabling the component. Destroy must also release their native
+            // ownership. RTHandles only wrap our textures, so release the wrappers before destroying the textures.
+            ReleaseURPHandles();
+            _oceanMaskCommandBuffer?.Release();
+            _oceanMaskCommandBuffer = null;
+            _underwaterEffectCommandBuffer?.Release();
+            _underwaterEffectCommandBuffer = null;
+
+            Helpers.Destroy(_oceanMaskMaterial?.material);
+            _oceanMaskMaterial = null;
+            Helpers.Destroy(_underwaterEffectMaterial?.material);
+            _underwaterEffectMaterial = null;
+            Helpers.Destroy(_volumeMaterial);
+            _volumeMaterial = null;
+
+            DestroyMaskTexture(ref _maskRT);
+            DestroyMaskTexture(ref _depthRT);
+            DestroyMaskTexture(ref _volumeFrontFaceRT);
+            DestroyMaskTexture(ref _volumeBackFaceRT);
+        }
+
+        static void DestroyMaskTexture(ref RenderTexture texture)
+        {
+            if (texture == null) return;
+            texture.Release();
+            Helpers.Destroy(texture);
+            texture = null;
+        }
+
         void Enable()
         {
             if (!_overlay)
@@ -310,25 +341,29 @@ namespace Crest
 
         void UpdateInstance()
         {
-            if (OceanRenderer.Instance == null)
+            var primaryCamera = OceanRenderer.Instance == null ? null : OceanRenderer.Instance.ViewCameraExcludingSceneCamera;
+            UnderwaterRenderer instance = null;
+            if (primaryCamera != null)
             {
-                return;
+                primaryCamera.TryGetComponent(out instance);
             }
 
-            if (s_PrimaryCamera != OceanRenderer.Instance.ViewCameraExcludingSceneCamera)
+            if (instance != null && !instance.isActiveAndEnabled)
             {
-                s_PrimaryCamera = OceanRenderer.Instance.ViewCameraExcludingSceneCamera;
-                if (s_PrimaryCamera != null && s_PrimaryCamera.TryGetComponent<UnderwaterRenderer>(out var instance))
-                {
-#if UNITY_EDITOR
-                    if (Instance != null) Instance.DisableEditMode();
-#endif
-                    Instance = instance;
-#if UNITY_EDITOR
-                    Instance.EnableEditMode();
-#endif
-                }
+                instance = null;
             }
+
+            // A camera can lose, disable or acquire its renderer without the primary camera itself changing.
+            if (s_PrimaryCamera == primaryCamera && Instance == instance) return;
+
+#if UNITY_EDITOR
+            if (Instance != null) Instance.DisableEditMode();
+#endif
+            s_PrimaryCamera = primaryCamera;
+            Instance = instance;
+#if UNITY_EDITOR
+            if (Instance != null) Instance.EnableEditMode();
+#endif
         }
 
         void AddCommandBuffers(Camera camera)

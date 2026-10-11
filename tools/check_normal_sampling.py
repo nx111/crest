@@ -12,6 +12,7 @@ import sys
 import unittest
 
 import check_urp_regressions as regression
+from check_flow_sampling import flow_phase
 
 NORMALS = regression.CREST + "Shaders/OceanNormalMapping.hlsl"
 TEXTURE = regression.CREST + "Shaders/ShaderLibrary/Texture.hlsl"
@@ -55,6 +56,7 @@ def evaluate(expression, values):
         "ddx": lambda quad: quad.values[1] - quad.values[0],
         "ddy": lambda quad: quad.values[2] - quad.values[0],
         "fmod": math.fmod,
+        "CrestFlowPhase": flow_phase,
     }
     tree = ast.parse(expression.strip(), mode="eval")
     allowed = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call, ast.Name, ast.Load,
@@ -160,7 +162,7 @@ class NormalSampling(unittest.TestCase):
         self.assertEqual(len(sample_calls), 4)
         flow_calls = calls(self.flow, "SampleNormalMaps")
         self.assertEqual(len(flow_calls), 2)
-        for time in (0, .3, .999, 1.001, 1.8, 9.4):
+        for time in (-9.4, -1.001, -.999, -.3, 0, .3, .999, 1.001, 1.8, 9.4):
             phases = {"_CrestTime": time, "flow": flow}
             for name in ("half_period", "period", "sample1_offset", "sample2_offset"):
                 phases[name] = evaluate(assignment(self.flow, name), phases)

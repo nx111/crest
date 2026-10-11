@@ -89,7 +89,48 @@ def assignment(source, name):
     return match[1]
 
 
+def horizon_above_surface(position_y, sea_y):
+    """Evaluate the production comparison, including a possible early half cast.
+
+    Native binary16 models the affected mobile precision path; this is not a
+    device shader execution. Inputs are first rounded to their declared float32.
+    """
+    source = regression.source(UNDERWATER + "UnderwaterMaskHorizonShared.hlsl")
+    source = regression.body(re.sub(r":\s*SV_Target\b", "", source), "Frag")
+    condition = re.search(r"return\s+([^?;]+)\?", source)[1]
+    condition = re.sub(r"\(\s*half[1-4]?\s*\)\s*(positionWS\.y)", r"binary16(\1)", condition)
+
+    def binary16(value):
+        try:
+            return struct.unpack("e", struct.pack("e", value))[0]
+        except OverflowError:
+            return math.copysign(math.inf, value)
+
+    def binary32(value): return struct.unpack("f", struct.pack("f", value))[0]
+    values = {"positionWS": Vector((0, binary32(position_y), 0)),
+              "_OceanCenterPosWorld": Vector((0, binary32(sea_y), 0))}
+    return evaluate(condition, values, {"binary16": binary16})
+
+
 class OpticalQuality(unittest.TestCase):
+    def test_horizon_mask_preserves_near_surface_height_at_positive_and_negative_altitudes(self):
+        for sea in (-10000.25, -4096, -1000.125, -1, 1, 1000.125, 4096, 10000.25):
+            for offset in (-.125, -.001, 0, .001, .125):
+                with self.subTest(sea=sea, offset=offset):
+                    self.assertEqual(horizon_above_surface(sea + offset, sea), offset > 0)
+
+    def test_horizon_mask_remains_correct_beyond_half_height_range(self):
+        for sea in (-1000000, -70000, 70000, 1000000):
+            for offset in (-.25, 0, .25):
+                with self.subTest(sea=sea, offset=offset):
+                    self.assertEqual(horizon_above_surface(sea + offset, sea), offset > 0)
+
+    def test_horizon_mask_keeps_origin_and_exact_sea_plane_convention(self):
+        for sea in (-4096, -1000, -64, 0, 64, 1000, 4096):
+            self.assertFalse(horizon_above_surface(sea, sea), sea)
+        self.assertFalse(horizon_above_surface(-.25, 0))
+        self.assertTrue(horizon_above_surface(.25, 0))
+
     def test_ray_attenuation_matches_world_length_under_camera_rotation(self):
         helper = regression.body(regression.source(regression.HELPERS), "CrestWaterRayDistance")
         alignment, distance = assignment(helper, "alignment"), re.search(r"return\s+([^;]+);", helper)[1]

@@ -95,6 +95,10 @@ namespace Crest
             return true;
         }
 
+        /// <summary>
+        /// Returns whether all requested data is valid. If only velocity is unavailable, returns false
+        /// with zero velocity while preserving the available height and normal.
+        /// </summary>
         public bool Sample(out float o_height, out Vector3 o_normal, out Vector3 o_surfaceVel)
         {
             var collProvider = OceanRenderer.Instance?.CollisionProvider;
@@ -118,11 +122,16 @@ namespace Crest
 
             o_height = _queryResult[0].y + OceanRenderer.Instance.SeaLevel;
             o_normal = _queryResultNormal[0];
-            o_surfaceVel = _queryResultVel[0];
+            var velocityAvailable = VelocityAvailable(collProvider, status);
+            o_surfaceVel = velocityAvailable ? _queryResultVel[0] : Vector3.zero;
 
-            return true;
+            return velocityAvailable;
         }
 
+        /// <summary>
+        /// Returns whether all requested data is valid. If only velocity is unavailable, returns false
+        /// with zero velocity while preserving the available displacement and normal.
+        /// </summary>
         public bool Sample(out Vector3 o_displacementToPoint, out Vector3 o_normal, out Vector3 o_surfaceVel)
         {
             var collProvider = OceanRenderer.Instance?.CollisionProvider;
@@ -145,9 +154,18 @@ namespace Crest
 
             o_displacementToPoint = _queryResult[0];
             o_normal = _queryResultNormal[0];
-            o_surfaceVel = _queryResultVel[0];
+            var velocityAvailable = VelocityAvailable(collProvider, status);
+            o_surfaceVel = velocityAvailable ? _queryResultVel[0] : Vector3.zero;
 
-            return true;
+            return velocityAvailable;
+        }
+
+        static bool VelocityAvailable(ICollProvider provider, int status)
+        {
+            // Other providers define their own status values; RetrieveSucceeded is authoritative for them.
+            const int unavailable = (int)QueryBase.QueryStatus.NotEnoughDataForVels
+                | (int)QueryBase.QueryStatus.VelocityDataInvalidated | (int)QueryBase.QueryStatus.InvalidDtForVelocity;
+            return !(provider is QueryBase) || (status & unavailable) == 0;
         }
     }
 

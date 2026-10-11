@@ -10,6 +10,14 @@
 #define SampleLod(i_lodTextureArray, i_uv_slice) (i_lodTextureArray.SampleLevel(LODData_linear_clamp_sampler, i_uv_slice, 0.0))
 #define SampleLodLevel(i_lodTextureArray, i_uv_slice, mips) (i_lodTextureArray.SampleLevel(LODData_linear_clamp_sampler, i_uv_slice, mips))
 
+float CrestFlowPhase(float time, float period)
+{
+	// Custom, networked and cutscene clocks can be negative. fmod alone would
+	// produce negative crossfade weights; preserve its positive-time result.
+	float phase = fmod(time, period);
+	return phase < 0.0 ? phase + period : phase;
+}
+
 float2 WorldToUV(in float2 i_samplePos, in CascadeParams i_cascadeParams)
 {
 	return (i_samplePos - i_cascadeParams._posSnapped) / (i_cascadeParams._texelWidth * i_cascadeParams._textureRes) + 0.5;

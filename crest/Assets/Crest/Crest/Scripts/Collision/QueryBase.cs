@@ -53,13 +53,19 @@ namespace Crest
         Vector3[] _queryPosScratch;
         bool _disposed;
 
+        struct QuerySegment
+        {
+            public int _start, _end, _lastUsedFrame;
+            // The readback layout belongs to the submitted batch, not to the caller's current outputs.
+            public int _pointCount, _normalCount;
+        }
+
         /// <summary>
         /// Holds information about all query points. Maps from unique hash code to position in point array.
         /// </summary>
         class SegmentRegistrar
         {
-            // Map from guids to (segment start index, segment end index, frame number when query was made)
-            public readonly Dictionary<int, Vector3Int> _segments = new Dictionary<int, Vector3Int>();
+            public readonly Dictionary<int, QuerySegment> _segments = new Dictionary<int, QuerySegment>();
             public int _numQueries = 0;
             public bool _inUse;
         }
@@ -118,12 +124,12 @@ namespace Crest
         NativeArray<Vector3> _queryResults;
         float _queryResultsTime = -1f;
         SegmentRegistrar _resultRegistrar;
-        Dictionary<int, Vector3Int> _resultSegments => _resultRegistrar?._segments;
+        Dictionary<int, QuerySegment> _resultSegments => _resultRegistrar?._segments;
 
         NativeArray<Vector3> _queryResultsLast;
         float _queryResultsTimeLast = -1f;
         SegmentRegistrar _resultRegistrarLast;
-        Dictionary<int, Vector3Int> _resultSegmentsLast => _resultRegistrarLast?._segments;
+        Dictionary<int, QuerySegment> _resultSegmentsLast => _resultRegistrarLast?._segments;
         long _nextRequestSequence;
         long _queryResultsSequence;
 
@@ -204,7 +210,7 @@ namespace Crest
 
             var registrar = _segmentRegistrarPool.Current;
             var hasSegment = registrar._segments.TryGetValue(i_ownerHash, out var segment);
-            var reuseSegment = hasSegment && segment.y - segment.x + 1 == countTotal;
+            var reuseSegment = hasSegment && segment._end - segment._start + 1 == countTotal;
 
             // Check all points, including the three samples per normal, before changing the registration.
             // Updating an existing range needs no additional space, even when the buffer is full.
@@ -222,12 +228,14 @@ namespace Crest
                     return false;
                 }
 
-                segment.x = registrar._numQueries;
-                segment.y = segment.x + (int)countTotal - 1;
+                segment._start = registrar._numQueries;
+                segment._end = segment._start + (int)countTotal - 1;
                 registrar._numQueries += (int)countTotal;
             }
 
-            segment.z = Time.frameCount;
+            segment._lastUsedFrame = Time.frameCount;
+            segment._pointCount = countPts;
+            segment._normalCount = countNorms;
             registrar._segments[i_ownerHash] = segment;
 
             // The smallest wavelengths should repeat no more than twice across the smaller spatial length. Unless we're
@@ -238,15 +246,15 @@ namespace Crest
 
             for (int pointi = 0; pointi < countPts; pointi++)
             {
-                _queryPosXZ_minGridSize[pointi + segment.x].x = queryPoints[pointi].x;
-                _queryPosXZ_minGridSize[pointi + segment.x].y = queryPoints[pointi].z;
-                _queryPosXZ_minGridSize[pointi + segment.x].z = minGridSize;
+                _queryPosXZ_minGridSize[pointi + segment._start].x = queryPoints[pointi].x;
+                _queryPosXZ_minGridSize[pointi + segment._start].y = queryPoints[pointi].z;
+                _queryPosXZ_minGridSize[pointi + segment._start].z = minGridSize;
             }
 
             // To compute each normal, post 3 query points
             for (int normi = 0; normi < countNorms; normi++)
             {
-                var arrIdx = segment.x + countPts + 3 * normi;
+                var arrIdx = segment._start + countPts + 3 * normi;
 
                 _queryPosXZ_minGridSize[arrIdx + 0].x = queryNormals[normi].x;
                 _queryPosXZ_minGridSize[arrIdx + 0].y = queryNormals[normi].z;
@@ -313,7 +321,8 @@ namespace Crest
             // A caller may resize its query before the new readback arrives. Never read another owner's range
             // or partially overwrite outputs on failure. Partial/optional outputs remain supported.
             if ((displacements != null && heights != null && displacements.Length != heights.Length)
-                || !HasResultRange(segment, _queryResults.Length, (long)countPoints + (long)countNorms * 3))
+                || countPoints > segment._pointCount || countNorms > segment._normalCount
+                || !HasResultRange(segment, _queryResults.Length, (long)segment._pointCount + (long)segment._normalCount * 3))
             {
                 return false;
             }
@@ -321,7 +330,7 @@ namespace Crest
             if (countPoints > 0)
             {
                 // Retrieve Results
-                if (displacements != null) _queryResults.Slice(segment.x, countPoints).CopyTo(displacements);
+                if (displacements != null) _queryResults.Slice(segment._start, countPoints).CopyTo(displacements);
 
                 // Retrieve Result heights
                 if (heights != null)
@@ -329,14 +338,14 @@ namespace Crest
                     var seaLevel = OceanRenderer.Instance.SeaLevel;
                     for (int i = 0; i < countPoints; i++)
                     {
-                        heights[i] = seaLevel + _queryResults[i + segment.x].y;
+                        heights[i] = seaLevel + _queryResults[i + segment._start].y;
                     }
                 }
             }
 
             if (countNorms > 0)
             {
-                int firstNorm = segment.x + countPoints;
+                int firstNorm = segment._start + segment._pointCount;
 
                 var dx = -Vector3.right * s_finiteDiffDx;
                 var dz = -Vector3.forward * s_finiteDiffDx;
@@ -354,10 +363,10 @@ namespace Crest
             return true;
         }
 
-        static bool HasResultRange(Vector3Int segment, int resultCount, long requestedCount)
+        static bool HasResultRange(QuerySegment segment, int resultCount, long requestedCount)
         {
-            return segment.x >= 0 && segment.y >= segment.x && segment.y < resultCount
-                && requestedCount <= (long)segment.y - segment.x + 1;
+            return segment._start >= 0 && segment._end >= segment._start && segment._end < resultCount
+                && requestedCount <= (long)segment._end - segment._start + 1;
         }
 
         /// <summary>
@@ -382,7 +391,7 @@ namespace Crest
                 return (int)QueryStatus.NotEnoughDataForVels;
             }
 
-            if ((segment.y - segment.x) != (segmentLast.y - segmentLast.x)
+            if (segment._pointCount != segmentLast._pointCount || results.Length > segment._pointCount
                 || !HasResultRange(segment, _queryResults.Length, results.Length)
                 || !HasResultRange(segmentLast, _queryResultsLast.Length, results.Length))
             {
@@ -399,7 +408,7 @@ namespace Crest
             var count = results.Length;
             for (var i = 0; i < count; i++)
             {
-                results[i] = (_queryResults[i + segment.x] - _queryResultsLast[i + segmentLast.x]) / dt;
+                results[i] = (_queryResults[i + segment._start] - _queryResultsLast[i + segmentLast._start]) / dt;
             }
 
             return 0;
@@ -464,13 +473,13 @@ namespace Crest
             // their ranges. A separate array avoids overwriting unread ranges when dictionary order changes.
             foreach (var segment in _segmentRegistrarPool.Current._segments)
             {
-                if (Time.frameCount - segment.Value.z < 10)
+                if (Time.frameCount - segment.Value._lastUsedFrame < 10)
                 {
                     var newSegment = segment.Value;
-                    var count = newSegment.y - newSegment.x + 1;
-                    newSegment.x = nextRegistrar._numQueries;
-                    newSegment.y = newSegment.x + count - 1;
-                    System.Array.Copy(_queryPosXZ_minGridSize, segment.Value.x, _queryPosScratch, newSegment.x, count);
+                    var count = newSegment._end - newSegment._start + 1;
+                    newSegment._start = nextRegistrar._numQueries;
+                    newSegment._end = newSegment._start + count - 1;
+                    System.Array.Copy(_queryPosXZ_minGridSize, segment.Value._start, _queryPosScratch, newSegment._start, count);
                     nextRegistrar._segments.Add(segment.Key, newSegment);
                     nextRegistrar._numQueries += count;
                 }

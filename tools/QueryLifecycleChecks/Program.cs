@@ -37,6 +37,16 @@ static class Program
             ("resized output cannot read a neighboring owner's retained result", ResizedOutput),
             ("invalid output shapes leave every output untouched and partial reads remain valid", OutputShapes),
             ("velocity output cannot exceed either retained owner range", VelocityBounds),
+            ("normal-only outputs use the retained query layout", NormalOnlyOutput),
+            ("partial outputs do not move the retained normal range", PartialNormalOutput),
+            ("missing normal samples cannot be reinterpreted from point data", MissingNormals),
+            ("point outputs cannot read a retained normal probe", PointOutputBounds),
+            ("equal-sized batches retain distinct point and normal layouts", ChangedLayout),
+            ("velocity outputs cannot read normal probes", VelocityPointBounds),
+            ("toggling normal queries preserves valid point velocities", VelocityNormalToggle),
+            ("height helper reports invalid velocity without discarding surface data", HeightHelperVelocity),
+            ("displacement helper reports invalid velocity without discarding surface data", DisplacementHelperVelocity),
+            ("height helper respects non-GPU provider status semantics", OtherProviderVelocity),
         };
         var failed = 0;
         foreach (var test in tests)
@@ -590,9 +600,170 @@ static class Program
         Near(output[0].x, 1f, "partial velocity value");
         NoErrors();
     }
+
+    static void CompleteSlopedSurface(int index, float offset = 0f)
+    {
+        var data = AsyncGPUReadback.Requests[index].Data;
+        for (int i = 0; i < data.Length; i++)
+            data[i] = new Vector3(0f, 2f * data[i].x + 3f * data[i].y + offset, 0f);
+        AsyncGPUReadback.Complete(index);
+    }
+
+    static void SlopedNormal(Vector3 normal)
+    {
+        var expected = new Vector3(-2f, 1f, -3f).normalized;
+        Check(Math.Abs(normal.x - expected.x) < 0.001f
+            && Math.Abs(normal.y - expected.y) < 0.001f
+            && Math.Abs(normal.z - expected.z) < 0.001f, "normal read the wrong retained samples");
+    }
+
+    static TestQuery SlopedQuery(int pointCount = 3, bool normals = true)
+    {
+        var query = new TestQuery();
+        var points = Points(Enumerable.Range(1, pointCount).Select(i => (float)i).ToArray());
+        Frame(1);
+        Check(query.Post(1, points, normals ? points : null), "sloped query registration failed");
+        query.UpdateQueries();
+        CompleteSlopedSurface(0);
+        return query;
+    }
+
+    static void NormalOnlyOutput()
+    {
+        var query = SlopedQuery();
+        var normals = new Vector3[3];
+        Check(query.Results(1, null, null, normals), "normal-only retrieval failed");
+        foreach (var normal in normals) SlopedNormal(normal);
+    }
+
+    static void PartialNormalOutput()
+    {
+        var query = SlopedQuery();
+        var normals = new Vector3[1];
+        var displacements = new Vector3[1];
+        Check(query.Results(1, displacements, null, normals), "partial retrieval failed");
+        Near(displacements[0].y, 305f, "partial displacement");
+        SlopedNormal(normals[0]);
+    }
+
+    static void MissingNormals()
+    {
+        var query = SlopedQuery(pointCount: 4, normals: false);
+        var sentinel = new Vector3(-99, -98, -97);
+        var normals = new[] { sentinel };
+        Check(!query.Results(1, null, null, normals), "point data was accepted as normal probes");
+        Near(normals[0].x, sentinel.x, "missing normals changed output");
+    }
+
+    static void PointOutputBounds()
+    {
+        var query = SlopedQuery(pointCount: 1);
+        var sentinel = new Vector3(-99, -98, -97);
+        var displacements = new[] { sentinel, sentinel };
+        Check(!query.Results(1, displacements, null, null), "point output consumed a normal probe");
+        Check(displacements.All(v => v.x == sentinel.x && v.y == sentinel.y), "invalid point output was partially overwritten");
+    }
+
+    static void ChangedLayout()
+    {
+        var query = SlopedQuery(pointCount: 4, normals: false);
+        Frame(2);
+        var points = Points(1);
+        Check(query.Post(1, points, points), "equal-sized replacement registration failed");
+        Check(!query.Results(1, null, null, new Vector3[1]), "new normal layout read an old all-points result");
+        query.UpdateQueries();
+        CompleteSlopedSurface(1, 1f);
+        var normals = new Vector3[1];
+        Check(query.Results(1, new Vector3[1], null, normals), "replacement result unavailable");
+        SlopedNormal(normals[0]);
+        var velocity = new[] { new Vector3(-99, -98, -97) };
+        Check(query.Velocity(1, velocity) == (int)QueryBase.QueryStatus.VelocityDataInvalidated,
+            "equal total size concealed a changed point count");
+        Near(velocity[0].x, -99f, "invalid velocity changed output");
+    }
+
+    static void VelocityPointBounds()
+    {
+        var query = SlopedQuery(pointCount: 1);
+        Frame(2);
+        query.UpdateQueries();
+        CompleteSlopedSurface(1, 1f);
+        var velocity = new[] { new Vector3(-99, -98, -97), new Vector3(-99, -98, -97) };
+        Check(query.Velocity(1, velocity) == (int)QueryBase.QueryStatus.VelocityDataInvalidated,
+            "velocity output consumed normal probe data");
+        Check(velocity.All(v => v.x == -99 && v.y == -98), "invalid velocity partially changed output");
+    }
+
+    static void VelocityNormalToggle()
+    {
+        var query = SlopedQuery(pointCount: 1, normals: false);
+        Frame(2);
+        var points = Points(1);
+        Check(query.Post(1, points, points), "normal-enabled registration failed");
+        query.UpdateQueries();
+        CompleteSlopedSurface(1, 1f);
+        var velocity = new Vector3[1];
+        Check(query.Velocity(1, velocity) == 0, "normal query toggle invalidated unchanged point layout");
+        Near(velocity[0].y, 1f, "normal toggle changed velocity");
+    }
+
+    static (TestQuery query, SampleHeightHelper helper) HelperWithInvalidVelocity()
+    {
+        var query = new TestQuery();
+        OceanRenderer.Instance.CollisionProvider = query;
+        var helper = new SampleHeightHelper();
+        for (int i = 0; i < 2; i++)
+        {
+            Frame(i + 1);
+            helper.Init(Points(1)[0]);
+            helper.Sample(out Vector3 _, out _, out _);
+            query.UpdateQueries();
+            CompleteSlopedSurface(i, (i + 1) * 10f);
+        }
+        Frame(3);
+        Check(helper.Sample(out Vector3 _, out _, out var velocity), "initial helper velocity was unavailable");
+        Near(velocity.y, 10f, "initial helper velocity");
+        query.UpdateQueries();
+        CompleteSlopedSurface(2, 30f);
+        Frame(4); Time.time = 3f;
+        query.UpdateQueries();
+        CompleteSlopedSurface(3, 31f);
+        return (query, helper);
+    }
+
+    static void HeightHelperVelocity()
+    {
+        var (query, helper) = HelperWithInvalidVelocity();
+        Check(!helper.Sample(out float height, out var normal, out var velocity), "height helper accepted invalid velocity");
+        Near(height, 336f + OceanRenderer.Instance.SeaLevel, "valid height was discarded");
+        SlopedNormal(normal);
+        Near(velocity.x, 0, "invalid velocity x"); Near(velocity.y, 0, "stale velocity y"); Near(velocity.z, 0, "invalid velocity z");
+        query.CleanUp();
+    }
+
+    static void DisplacementHelperVelocity()
+    {
+        var (query, helper) = HelperWithInvalidVelocity();
+        Check(!helper.Sample(out Vector3 displacement, out var normal, out var velocity), "displacement helper accepted invalid velocity");
+        Near(displacement.y, 336f, "valid displacement was discarded");
+        SlopedNormal(normal);
+        Near(velocity.x, 0, "invalid velocity x"); Near(velocity.y, 0, "stale velocity y"); Near(velocity.z, 0, "invalid velocity z");
+        query.CleanUp();
+    }
+
+    static void OtherProviderVelocity()
+    {
+        OceanRenderer.Instance.CollisionProvider = new OpaqueStatusProvider();
+        var helper = new SampleHeightHelper();
+        helper.Init(Points(1)[0]);
+        Check(helper.Sample(out float height, out _, out var velocity), "GPU flags were applied to a non-GPU status");
+        Near(height, 4f, "non-GPU height"); Near(velocity.y, 6f, "non-GPU velocity");
+        Check(helper.Sample(out Vector3 displacement, out _, out velocity), "displacement helper rejected non-GPU success");
+        Near(displacement.y, 4f, "non-GPU displacement"); Near(velocity.y, 6f, "non-GPU displacement velocity");
+    }
 }
 
-sealed class TestQuery : QueryBase
+sealed class TestQuery : QueryBase, ICollProvider
 {
     protected override string QueryShaderName => "TestQuery";
     protected override string QueryKernelName => "Main";
@@ -604,16 +775,38 @@ sealed class TestQuery : QueryBase
     public bool Results(int owner, Vector3[] displacements, float[] heights, Vector3[] normals)
         => RetrieveResults(owner, displacements, heights, normals);
     public int Velocity(int owner, Vector3[] results) => CalculateVelocities(owner, results);
+    public int Query(int owner, float minimumLength, Vector3[] points, float[] heights, Vector3[] normals, Vector3[] velocities)
+        => throw new NotSupportedException("These helper tests use the inherited production displacement API.");
+}
+
+sealed class OpaqueStatusProvider : ICollProvider
+{
+    public int Query(int owner, float length, Vector3[] points, Vector3[] displacements, Vector3[] normals, Vector3[] velocities)
+    {
+        if (displacements != null) Array.Fill(displacements, new Vector3(0, 4, 0));
+        if (normals != null) Array.Fill(normals, Vector3.up);
+        if (velocities != null) Array.Fill(velocities, new Vector3(5, 6, 7));
+        return 16; // An opaque success value with no relationship to QueryBase's bitmask.
+    }
+    public int Query(int owner, float length, Vector3[] points, float[] heights, Vector3[] normals, Vector3[] velocities)
+        => throw new NotSupportedException();
+    public bool RetrieveSucceeded(int status) => status == 16;
+    public void UpdateQueries() { }
+    public void CleanUp() { }
 }
 
 namespace UnityEngine
 {
+    public class Object { }
+    public struct Vector2 { public float x, y; public static Vector2 zero => default; }
     public struct Vector3
     {
         public float x, y, z;
         public Vector3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; }
         public static Vector3 right => new Vector3(1, 0, 0);
         public static Vector3 forward => new Vector3(0, 0, 1);
+        public static Vector3 up => new Vector3(0, 1, 0);
+        public static Vector3 zero => default;
         public Vector3 normalized
         {
             get { var length = MathF.Sqrt(x * x + y * y + z * z); return length > 0 ? this / length : default; }
@@ -820,6 +1013,8 @@ namespace Crest
         public static OceanRenderer Instance;
         public AnimatedWaves _lodDataAnimWaves = new AnimatedWaves();
         public float SeaLevel;
+        public ICollProvider CollisionProvider;
+        public IFlowProvider FlowProvider;
     }
     public static class Helpers
     {

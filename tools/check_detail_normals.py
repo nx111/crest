@@ -103,6 +103,11 @@ class NormalChain:
             "normalize": lambda value: value / self.round(math.sqrt(self.shader_dot(value, value))),
             "fmod": math.fmod,
         }
+        helpers = source.source(source.CREST + "Shaders/OceanHelpersNew.hlsl")
+        if "float CrestFlowPhase(" in helpers:
+            flow_helper = source.body(helpers, "CrestFlowPhase")
+            self.functions["CrestFlowPhase"] = lambda time, period: self.run(
+                flow_helper, {"time": time, "period": period})
         if "float3 CrestReorientNormal(" in self.normals:
             helper = source.body(self.normals, "CrestReorientNormal")
             self.functions["CrestReorientNormal"] = lambda base, detail: self.run(
@@ -252,7 +257,7 @@ class DetailNormals(unittest.TestCase):
         wave, level, overall, strength = Vector((2, -1)), Vector((.25, .5)), .5, .36
         slopes = (wave + level) * overall
         base = normalize((slopes.x, 1, slopes.y))
-        for time in (0, .25, .9, 1, 1.1, 1.75, 2, 7.6):
+        for time in (-7.6, -2, -1.75, -1.1, -1, -.9, -.25, 0, .25, .9, 1, 1.1, 1.75, 2, 7.6):
             weight = 1 - abs(time % 2 - 1)
             detail = (samples[0] * weight + samples[1] * (1 - weight)) * overall * strength
             iterator = iter(samples)
@@ -264,7 +269,7 @@ class DetailNormals(unittest.TestCase):
         # Synthetic values stand in for filtered texture samples. At a phase's
         # reset its weight must vanish, independent of the resetting sample.
         sampler = lambda offset: (math.sin(3 * offset[0] + .2), .7 * math.cos(2 * offset[1] - .4))
-        for time in (1, 2, 3, 8):
+        for time in (-8, -3, -2, -1, 0, 1, 2, 3, 8):
             before = self.chain.compose((2, -.75), flow=True, time=time - 1e-7, sampler=sampler)
             after = self.chain.compose((2, -.75), flow=True, time=time + 1e-7, sampler=sampler)
             self.assertLess(length(before - after), 2e-6)

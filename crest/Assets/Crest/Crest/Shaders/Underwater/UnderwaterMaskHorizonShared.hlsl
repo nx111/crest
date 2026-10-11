@@ -45,7 +45,9 @@ half4 Frag(Varyings input) : SV_Target
 	UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
 	float3 positionWS = ComputeWorldSpacePosition(input.uv, _FarPlaneOffset, UNITY_MATRIX_I_VP);
-	return (half4) positionWS.y > _OceanCenterPosWorld.y
+	// Compare absolute heights in float: half quantization can move a raised or
+	// lowered sea plane by metres. Only the small mask constants may use half.
+	return positionWS.y > _OceanCenterPosWorld.y
 		? CREST_MASK_ABOVE_SURFACE
 		: CREST_MASK_BELOW_SURFACE;
 }

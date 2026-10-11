@@ -40,6 +40,14 @@ It does not include the commercial Crest URP package.
   checks, not a new Unity/device run.
 - Renderer: **Universal Renderer with Render Graph enabled**, initially Forward,
   Linear color, MSAA off, render scale 1.0. The 2D Renderer is not supported.
+- **Subsequent production static review (baseline `487442b3`):** fixes query layout
+  ownership, baked-query coordinate compaction/output bounds, helper velocity
+  availability, FFT resource-cache invalidation, zero-time dynamic-wave damping,
+  negative-time Flow phases, horizon height precision and underwater camera/resource
+  lifecycles. See the [source review](URP-PRODUCTION-STATIC-REVIEW.md) for counterexamples
+  and offline results, including 250 selected DXC stages/variants. These production
+  changes have no new Unity/device validation and do not inherit the earlier retest's
+  visual or performance results.
 - **Headless Unity import, C# API binding, pipeline creation, example asset conversion
   and configuration validation passed locally on Unity 6000.6.2f1 / URP 17.6.0.**
   The project includes the generated pipeline assets and converted example materials;

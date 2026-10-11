@@ -60,14 +60,7 @@ void UpdateDynWaves(uint3 id : SV_DispatchThreadID)
 
 	// Min wavelength for this scale
 	const float wavelength = 2.0 * gridSize;
-	// could make velocity depend on waves
-	//float h = max(waterSignedDepth + ft, 0.);
-	float c = ComputeWaveSpeed(wavelength, _Gravity);
-
 	const float dt = _SimDeltaTime;
-
-	// Clamp based on my main man Courant
-	c = min( c, _CourantNumber * gridSize / dt );
 
 	const float3 uv_slice = float3(input_uv, sliceIndex);
 
@@ -100,12 +93,24 @@ void UpdateDynWaves(uint3 id : SV_DispatchThreadID)
 
 	float fxm, fym, fxp, fyp; float2 ft_v;
 	ft_v = fxm = fym = fxp = fyp = 0.0;
+	ft_v = SampleLod(_LD_TexArray_DynamicWaves_Source, uv_source).xy;
+
+	// Frames between simulation steps only reproject history. Applying the edge
+	// damping here would drain wave energy while paused or at high render rates.
+	if (dt <= 0.0)
+	{
+		_LD_TexArray_Target[id] = all(isfinite(ft_v)) ? ft_v : (float2)0.0;
+		return;
+	}
+
+	float c = ComputeWaveSpeed(wavelength, _Gravity);
+	// Limit propagation speed to the Courant bound only for a positive step.
+	c = min(c, _CourantNumber * gridSize / dt);
 
 	fxm = SampleLod(_LD_TexArray_DynamicWaves_Source, uv_source - e * X).x; // x minus
 	fym = SampleLod(_LD_TexArray_DynamicWaves_Source, uv_source - e * Y).x; // y minus
 	fxp = SampleLod(_LD_TexArray_DynamicWaves_Source, uv_source + e * X).x; // x plus
 	fyp = SampleLod(_LD_TexArray_DynamicWaves_Source, uv_source + e * Y).x; // y plus
-	ft_v = SampleLod(_LD_TexArray_DynamicWaves_Source, uv_source).xy;
 
 	// wave propagation
 
