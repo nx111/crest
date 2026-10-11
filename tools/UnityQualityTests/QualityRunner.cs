@@ -17,6 +17,7 @@ using Object = UnityEngine.Object;
 public static class QualityRunner
 {
     const string Running = "CrestQualityRunning";
+    const string SpecularAA = "CrestQualitySpecularAA";
     const string Main = "Assets/Crest/Crest-Examples/Main/Scenes/main.unity";
     static readonly string Output = Path.Combine(Path.GetDirectoryName(Application.dataPath), "QualityCaptures");
     static readonly List<string> Results = new List<string>();
@@ -50,6 +51,7 @@ public static class QualityRunner
     {
         CrestURPSetup.ValidatePipeline();
         SessionState.SetBool(Running, true);
+        SessionState.SetBool(SpecularAA, Environment.GetCommandLineArgs().Contains("-crestSpecularAA"));
         EditorSceneManager.OpenScene(Main);
         EditorApplication.EnterPlaymode();
     }
@@ -166,6 +168,8 @@ public static class QualityRunner
             image.ReadPixels(new Rect(0, 0, target.width, target.height), 0, 0);
             image.Apply();
             var pixels = image.GetPixels();
+            Check(pixels.All(c => Finite(c.r) && Finite(c.g) && Finite(c.b) && Finite(c.a)),
+                name + " has only finite HDR pixels");
             Results.Add(name + ": luminance range " + pixels.Min(c => c.grayscale) + ".." + pixels.Max(c => c.grayscale));
             var preview = new Texture2D(target.width, target.height, TextureFormat.RGB24, false);
             preview.SetPixels(pixels.Select(c => c.gamma).ToArray());
@@ -193,7 +197,96 @@ public static class QualityRunner
     static double Difference(Color[] a, Color[] b) => a.Zip(b, (x, y) =>
         (double)(Mathf.Abs(x.r - y.r) + Mathf.Abs(x.g - y.g) + Mathf.Abs(x.b - y.b))).Average();
 
+    static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+
     static IEnumerable<object> Wait(int count) { for (var i = 0; i < count; i++) yield return null; }
+
+    static IEnumerable<object> CaptureSpecularAA(Light sun)
+    {
+        Check(_water.HasProperty("_SpecularAAVariance") && _water.HasProperty("_SpecularAAThreshold"),
+            "Water exposes specular antialiasing controls");
+        var savedWater = new Material(_water);
+        var savedKeywords = _water.shaderKeywords;
+        var savedSunIntensity = sun.intensity;
+        var savedSunColor = sun.color;
+        var savedSunRotation = sun.transform.rotation;
+        var normals = new Texture2D(128, 128, TextureFormat.RGBA32, true, true)
+        {
+            name = "Quality high frequency normals",
+            wrapMode = TextureWrapMode.Repeat,
+            filterMode = FilterMode.Trilinear,
+        };
+        var environment = new Cubemap(16, TextureFormat.RGBA32, true);
+        try
+        {
+            // A linear, mipmapped normal texture avoids dependencies on the sample's imported texture.
+            // Alpha=1 supports both RGB and RG-or-AG unpacking used by Unity's target backends.
+            var normalPixels = new Color[normals.width * normals.height];
+            for (var y = 0; y < normals.height; y++)
+            for (var x = 0; x < normals.width; x++)
+            {
+                var u = 2 * Mathf.PI * x / normals.width;
+                var v = 2 * Mathf.PI * y / normals.height;
+                var nx = 0.35f * Mathf.Sin(8 * u) + 0.12f * Mathf.Sin(13 * v);
+                var ny = 0.35f * Mathf.Cos(7 * v);
+                var nz = Mathf.Sqrt(1 - nx * nx - ny * ny);
+                normalPixels[y * normals.width + x] = new Color(0.5f + 0.5f * nx, 0.5f + 0.5f * ny, 0.5f + 0.5f * nz, 1);
+            }
+            normals.SetPixels(normalPixels);
+            normals.Apply();
+            for (var face = 0; face < 6; face++)
+                environment.SetPixels(Enumerable.Repeat(Color.black, 256).ToArray(), (CubemapFace)face);
+            environment.Apply();
+
+            foreach (var keyword in new[] { "_TRANSPARENCY_ON", "_FOAM_ON", "_ALBEDO_ON", "_SHADOWS_ON",
+                "_CAUSTICS_ON", "_SUBSURFACESCATTERING_ON", "_PROCEDURALSKY_ON", "_PLANARREFLECTIONS_ON",
+                "_DIRECTIONALLIGHTVARYROUGHNESS_ON", "_FLOW_ON" }) _water.DisableKeyword(keyword);
+            _water.EnableKeyword("_APPLYNORMALMAPPING_ON");
+            _water.EnableKeyword("_COMPUTEDIRECTIONALLIGHT_ON");
+            _water.EnableKeyword("_OVERRIDEREFLECTIONCUBEMAP_ON");
+            _water.SetTexture("_ReflectionCubemapOverride", environment);
+            _water.SetTexture("_Normals", normals);
+            _water.SetFloat("_NormalsStrengthOverall", 1);
+            _water.SetFloat("_NormalsStrength", 0.65f);
+            _water.SetFloat("_NormalsScale", 20);
+            _water.SetFloat("_AdditionalLightIntensity", 0);
+            _water.SetFloat("_Specular", 1);
+            _water.SetFloat("_DirectionalLightBoost", 20);
+            _water.SetFloat("_DirectionalLightFallOff", 4096);
+            _water.SetColor("_Diffuse", Color.black);
+            _water.SetColor("_DiffuseGrazing", Color.black);
+            var view = (_camera.transform.position - new Vector3(0, _ocean.SeaLevel, 15)).normalized;
+            var sunDirection = Vector3.Reflect(-view, Vector3.up);
+            sun.transform.rotation = Quaternion.LookRotation(-sunDirection);
+            sun.intensity = 1;
+            sun.color = Color.white;
+            _water.SetFloat("_SpecularAAThreshold", 0.2f);
+            _water.SetFloat("_SpecularAAVariance", 0);
+            foreach (var unused in Wait(5)) yield return unused;
+            var off = Capture("11d-specular-aa-off");
+            Check(off.Max(c => c.grayscale) > 0.001f, "Specular AA diagnostic contains a visible sun highlight");
+            _water.SetFloat("_SpecularAAVariance", 0.15f);
+            var on = Capture("11e-specular-aa-on");
+            var delta = Difference(off, on);
+            Check(delta > 0.000001, "Specular AA changes high frequency water highlights; mean RGB delta " + delta);
+            _water.SetFloat("_SpecularAAVariance", 0);
+            var restored = Capture("11f-specular-aa-off-restored");
+            Check(Difference(off, restored) < 0.00001,
+                "Zero specular variance restores the unfiltered highlight at frozen simulation time");
+            Results.Add("NOTE: Specular AA captures test integration and reversibility, not temporal stability or supersampled accuracy.");
+        }
+        finally
+        {
+            _water.CopyPropertiesFromMaterial(savedWater);
+            _water.shaderKeywords = savedKeywords;
+            sun.intensity = savedSunIntensity;
+            sun.color = savedSunColor;
+            sun.transform.rotation = savedSunRotation;
+            Object.DestroyImmediate(savedWater);
+            Object.DestroyImmediate(normals);
+            Object.DestroyImmediate(environment);
+        }
+    }
 
     static IEnumerator Run()
     {
@@ -351,6 +444,11 @@ public static class QualityRunner
         reflection.enabled = false;
         _water.SetFloat("_Specular", 0);
 
+        if (SessionState.GetBool(SpecularAA, false))
+            foreach (var unused in CaptureSpecularAA(sun)) yield return unused;
+        else
+            Results.Add("SKIP: Specular AA capture diagnostic; add -crestSpecularAA to enable it.");
+
         // A regular URP transparent material, behind the depth-writing sea, needs no Crest shader.
         _water.EnableKeyword("_TRANSPARENCY_ON");
         _water.SetVector("_DepthFogDensity", Vector4.zero);
@@ -482,14 +580,17 @@ public static class QualityRunner
             environment.SetPixels(Enumerable.Repeat(new Color(0.05f, 0.1f, 0.2f), 256).ToArray(), (CubemapFace)face);
         environment.Apply();
         _water.SetTexture("_ReflectionCubemapOverride", environment);
-        foreach (var unused in Wait(20)) yield return unused;
-        var urp = Capture("reference-urp-surface");
         var pipeline = GraphicsSettings.defaultRenderPipeline;
         var qualityPipeline = QualitySettings.renderPipeline;
         var waterShader = _water.shader;
         var waterKeywords = _water.shaderKeywords;
+        var specularAAVariance = _water.GetFloat("_SpecularAAVariance");
         try
         {
+            // The original Built-in shader has no specular AA. Compare equivalent shading options.
+            _water.SetFloat("_SpecularAAVariance", 0);
+            foreach (var unused in Wait(20)) yield return unused;
+            var urp = Capture("reference-urp-surface");
             _water.shader = referenceShader;
             // Shader assignment can restore previously inactive local keywords in Unity. Match the exact variant.
             _water.shaderKeywords = waterKeywords;
@@ -510,6 +611,7 @@ public static class QualityRunner
             QualitySettings.renderPipeline = qualityPipeline;
             _water.shader = waterShader;
             _water.shaderKeywords = waterKeywords;
+            _water.SetFloat("_SpecularAAVariance", specularAAVariance);
         }
     }
 }

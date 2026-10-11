@@ -1,5 +1,9 @@
 # URP migration static check results
 
+> The historical Unity/GPU results below predate the changes after `2aaeec77`.
+> Current specular, foam and optical validation is recorded separately in
+> [URP-REALISM-IMPROVEMENTS.md](URP-REALISM-IMPROVEMENTS.md).
+
 Date: 2026-10-10. Base: `db0658ff0b2e93e4a9e28cc2867509658b0ecc00`.
 
 | Check | Result |

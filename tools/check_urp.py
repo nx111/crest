@@ -64,6 +64,7 @@ if manifest["dependencies"].get("com.unity.render-pipelines.universal") != "17.6
 new_asset_roots = [ASSETS / "Crest/Crest/Scripts/URP", ASSETS / "Crest/Crest/Shaders/Helpers/URP", ASSETS / "CrestURPSettings"]
 new_assets = [ASSETS / "Crest/Crest/Scripts/Editor/CrestURPSetup.cs", ASSETS / "DefaultVolumeProfile.asset", ASSETS / "UniversalRenderPipelineGlobalSettings.asset"]
 new_assets.append(ASSETS / "Crest/Crest/Shaders/OceanAdditionalLights.hlsl")
+new_assets.append(ASSETS / "Crest/Crest/Shaders/OceanSpecular.hlsl")
 for folder in new_asset_roots:
     new_assets += [folder] + [p for p in folder.iterdir() if p.suffix in (".cs", ".hlsl", ".asset")]
 guids = set()

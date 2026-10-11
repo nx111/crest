@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CREST = "crest/Assets/Crest/Crest/"
 EXAMPLES = "crest/Assets/Crest/Crest-Examples/"
 CORE = CREST + "Shaders/Helpers/URP/Core.hlsl"
+HELPERS = CREST + "Shaders/OceanShaderHelpers.hlsl"
 FEATURE = CREST + "Scripts/URP/CrestUniversalRendererFeature.cs"
 OCEAN = CREST + "Shaders/Ocean.shader"
 MASKED = EXAMPLES + "Examples/Shaders/Masked.shader"
@@ -102,13 +103,13 @@ def mul(matrix, vector):
     return Vec(dot(row, vector) for row in matrix)
 
 
-def evaluate(expression, values):
+def evaluate(expression, values, extra_functions=None):
     """Evaluate the actual source expression, allowing only vector arithmetic."""
     parsed = ast.parse(expression, mode="eval")
     allowed = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call, ast.Name, ast.Load,
                ast.Constant, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.USub,
                ast.Subscript, ast.Attribute, ast.Compare, ast.Gt)
-    functions = {"dot": dot, "mul": mul, "float4": float4}
+    functions = {"dot": dot, "mul": mul, "float4": float4, **(extra_functions or {})}
     for node in ast.walk(parsed):
         if not isinstance(node, allowed):
             raise AssertionError(f"Unexpected shader expression: {expression}")
@@ -140,26 +141,81 @@ class URPRegressions(unittest.TestCase):
 
     def test_camera_matrix_conventions(self):
         self.assertNotRegex(source(CORE), r"#define\s+unity_CameraToWorld\b")
-        self.assertRegex(source(RECONSTRUCTION[0]), r"#if defined\(CREST_URP\)\s+float3 scenePos = .*UNITY_MATRIX_I_V")
+        helper = body(source(HELPERS), "CrestReconstructWorldPosition")
+        self.assertIn("ComputeWorldSpacePosition(i_positionNDC, i_rawDepth, UNITY_MATRIX_I_VP)", helper)
+        self.assertRegex(helper, r"#if !UNITY_REVERSED_Z\s+i_rawDepth = lerp\(UNITY_NEAR_CLIP_VALUE, 1.0, i_rawDepth\);")
+        view_helper = body(source(HELPERS), "CrestReconstructViewPosition")
+        self.assertIn("ComputeWorldSpacePosition(i_positionNDC, i_rawDepth, UNITY_MATRIX_I_P)", view_helper)
+        self.assertIn("CrestReconstructViewPosition(uvDepthRefract, reconstructionDepth)", source(RECONSTRUCTION[0]))
 
     def test_reconstructed_points_are_in_front_with_correct_eye_depth(self):
-        # Expected points come from camera-local coordinates, independently of the shader formula.
+        # Independent projected points cover perspective/ortho, reverse/forward Z,
+        # D3D/OpenGL NDC, refracted UVs, rotated cameras and large world coordinates.
+        helper_source = source(HELPERS)
+        helpers = {name: body(helper_source, name) if name in helper_source else ""
+                   for name in ("CrestReconstructWorldPosition", "CrestReconstructViewPosition")}
+
+        def matrix_product(a, b):
+            return tuple(tuple(sum(a[row][k] * b[k][col] for k in range(4)) for col in range(4)) for row in range(4))
+
         for path in RECONSTRUCTION:
             expression = re.search(r"float3 scenePos\s*=\s*([^;]+);", source(path))[1]
             expression = expression.replace("UNITY_MATRIX_I_V._13_23_33", "backward")
             alias = bool(re.search(r"#define\s+unity_CameraToWorld\s+UNITY_MATRIX_I_V", source(CORE)))
             expression = expression.replace("unity_CameraToWorld._m02_m12_m22", "backward" if alias else "forward")
-            for camera in (Vec((0, 0, 0)), Vec((40, 12, -120)), Vec((80000, -2000, -40000))):
-                for angles in ((0, 0, 0), (23, 67, -14), (-42, -121, 31)):
-                    right, up, forward = (rotate(v, angles) for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1)))
-                    for sx, sy in ((0, 0), (.35, -.4), (1.6, .8)):
-                        for depth in (.4, 25, 500):
-                            expected = camera + (forward + right * sx + up * sy) * depth
-                            view = (camera - expected) / math.sqrt(dot(camera - expected, camera - expected))
-                            actual = evaluate(expression, {"_WorldSpaceCameraPos": camera, "i_view": view, "view": view,
-                                                           "sceneZ": depth, "backward": -forward, "forward": forward})
-                            self.assertVectorClose(actual, expected, path)
-                            self.assertAlmostEqual(dot(actual - camera, forward), depth, delta=1e-7, msg=path)
+            for orthographic in (False, True):
+                for reversed_z, near_ndc, far_ndc, top_origin in ((True, 1, 0, True), (False, 0, 1, True), (False, -1, 1, False)):
+                    near, far, scale_x, scale_y = .2, 2000., .7, 1.3
+                    if orthographic:
+                        a = (far_ndc - near_ndc) / (far - near)
+                        b = near_ndc - a * near
+                        inverse_projection = ((1 / scale_x, 0, 0, 0), (0, 1 / scale_y, 0, 0), (0, 0, 1 / a, -b / a), (0, 0, 0, 1))
+                    else:
+                        a = (far_ndc * far - near_ndc * near) / (far - near)
+                        b = (near_ndc - far_ndc) * near * far / (far - near)
+                        inverse_projection = ((1 / scale_x, 0, 0, 0), (0, 1 / scale_y, 0, 0), (0, 0, 0, 1), (0, 0, 1 / b, -a / b))
+                    for camera in (Vec((0, 0, 0)), Vec((40, 12, -120)), Vec((80000, -2000, -40000))):
+                        for angles in ((0, 0, 0), (23, 67, -14), (-42, -121, 31)):
+                            right, up, forward = (rotate(v, angles) for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1)))
+                            camera_to_world = tuple((right[k], up[k], forward[k], camera[k]) for k in range(3)) + ((0, 0, 0, 1),)
+                            inverse_view_projection = matrix_product(camera_to_world, inverse_projection)
+
+                            def compute_world(uv, ndc_depth, inverse):
+                                ndc = Vec((uv[0] * 2 - 1, (uv[1] * 2 - 1) * (-1 if top_origin else 1), ndc_depth, 1))
+                                homogeneous = mul(inverse, ndc)
+                                return homogeneous.xyz / homogeneous[3]
+
+                            def reconstruct_position(uv, raw_depth, helper_name="CrestReconstructWorldPosition"):
+                                mapping = re.search(r"i_rawDepth\s*=\s*([^;]+);", helpers[helper_name])
+                                reconstruction = re.search(r"return\s+([^;]+);", helpers[helper_name])
+                                self.assertIsNotNone(reconstruction, "The source must define its world reconstruction helper")
+                                values = {"i_positionNDC": uv, "i_rawDepth": raw_depth, "UNITY_NEAR_CLIP_VALUE": near_ndc,
+                                          "UNITY_MATRIX_I_VP": inverse_view_projection, "UNITY_MATRIX_I_P": inverse_projection}
+                                if not reversed_z:
+                                    self.assertIsNotNone(mapping, "Non-reversed depth must be mapped to NDC")
+                                    values["i_rawDepth"] = evaluate(mapping[1], values, {"lerp": lambda x, y, t: x + (y - x) * t})
+                                return evaluate(reconstruction[1], values, {"ComputeWorldSpacePosition": compute_world})
+
+                            for sx, sy in ((0, 0), (.35, -.4), (1.6, .8)):
+                                for depth in (.4, 25, 500):
+                                    lateral_scale = 1 if orthographic else depth
+                                    expected = camera + forward * depth + (right * sx + up * sy) * lateral_scale
+                                    ndc_depth = a * depth + b if orthographic else a + b / depth
+                                    raw_depth = (ndc_depth + 1) * .5 if near_ndc == -1 else ndc_depth
+                                    uv = Vec(((scale_x * sx + 1) * .5, (scale_y * sy * (-1 if top_origin else 1) + 1) * .5))
+                                    # The water and refracted receiver need not share a ray. The near sample
+                                    # also reproduces an ortho MSAA depth replacement on the same pixel.
+                                    view_sx, view_sy = (sx - .13, sy + .07) if path == RECONSTRUCTION[0] else (sx, sy)
+                                    origin_hit = camera + forward * (depth * .5) + (right * view_sx + up * view_sy) * (1 if orthographic else depth * .5)
+                                    view = (camera - origin_hit) / math.sqrt(dot(camera - origin_hit, camera - origin_hit))
+                                    actual = evaluate(expression, {"_WorldSpaceCameraPos": camera, "i_view": view, "view": view,
+                                                                   "sceneZ": depth, "backward": -forward, "forward": forward,
+                                                                   "uvDepthRefract": uv, "uv": uv, "uvDepth": uv, "rawDepth": raw_depth, "sceneZ01": raw_depth,
+                                                                   "reconstructionDepth": raw_depth, "UNITY_MATRIX_I_V": camera_to_world,
+                                                                   "scenePosVS": reconstruct_position(uv, raw_depth, "CrestReconstructViewPosition") if helpers["CrestReconstructViewPosition"] else None},
+                                                      {"CrestReconstructWorldPosition": reconstruct_position})
+                                    self.assertVectorClose(actual, expected, (path, orthographic, near_ndc))
+                                    self.assertAlmostEqual(dot(actual - camera, forward), depth, delta=1e-7, msg=path)
 
     def test_msaa_is_recorded_per_camera_before_mask(self):
         feature = source(FEATURE)
@@ -240,7 +296,8 @@ class URPRegressions(unittest.TestCase):
     def test_reflection_probe_blending_receives_surface_position(self):
         reflection = source(CREST + "Shaders/OceanReflection.hlsl")
         self.assertIn("in const float3 i_positionWS,", reflection)
-        self.assertIn("GlossyEnvironmentReflection(refl, i_positionWS, _Roughness, 1.0h, i_screenPos.xy / i_screenPos.w)", reflection)
+        self.assertIn("float perceptualRoughness = CrestFilteredPerceptualRoughness(_Roughness, i_normalVariance);", reflection)
+        self.assertIn("GlossyEnvironmentReflection(refl, i_positionWS, perceptualRoughness, 1.0h, i_screenPos.xy / i_screenPos.w)", reflection)
         self.assertIn("ApplyReflectionSky(view, n_pixel, input.worldPos,", source(OCEAN))
         for path in (OCEAN, MASKED, TRANSPARENT):
             self.assertIn("#pragma multi_compile_fragment _ _REFLECTION_PROBE_BLENDING", source(path))

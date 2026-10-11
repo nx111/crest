@@ -175,18 +175,17 @@ Shader "Crest/Underwater Curtain"
 				// We need this when sampling a screenspace texture.
 				UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
-				const half3 view = normalize(_WorldSpaceCameraPos - input.positionWS);
-
-				const float pixelZ = LinearEyeDepth(input.positionCS.z);
+				const float pixelZ = CrestLinearEyeDepth(input.positionCS.z);
 				const half3 screenPos = input.foam_screenPos.yzw;
 				const float2 uvDepth = screenPos.xy / screenPos.z;
+				const float3 view = CrestViewDirectionFromViewPosition(CrestReconstructViewPosition(uvDepth, 0.5));
 				const float sceneZ01 = SAMPLE_TEXTURE2D_X(_CameraDepthTexture, sampler_CameraDepthTexture, uvDepth).x;
-				const float sceneZ = LinearEyeDepth(sceneZ01);
+				const float sceneZ = CrestLinearEyeDepth(sceneZ01);
 
 				const CascadeParams cascadeData0 = _CrestCascadeData[_LD_SliceIndex];
 				const CascadeParams cascadeData1 = _CrestCascadeData[_LD_SliceIndex + 1];
 
-				const float3 lightDir = _WorldSpaceLightPos0.xyz;
+				const float3 lightDir = WaveHarmonic::Crest::WorldSpaceLightDir(input.positionWS);
 				const half3 lightCol = _LightColor0;
 				const half3 n_pixel = 0.0;
 				const half3 bubbleCol = 0.0;
@@ -213,14 +212,15 @@ Shader "Crest/Underwater Curtain"
 				half3 sceneColour = CrestSampleBackground(input.grabPos.xy / input.grabPos.w);
 
 #if _CAUSTICS_ON
-				if (sceneZ01 != 0.0)
+				if (CrestHasSceneDepth(sceneZ01))
 				{
-					float3 scenePos = _WorldSpaceCameraPos - view * sceneZ / dot(UNITY_MATRIX_I_V._13_23_33, view);
+					float3 scenePos = CrestReconstructWorldPosition(uvDepth, sceneZ01);
 					ApplyCaustics(_CausticsTiledTexture, _CausticsDistortionTiledTexture, input.positionCS.xy, scenePos, lightDir, sceneZ, true, sceneColour, _LD_SliceIndex + 1, cascadeData1);
 				}
 #endif // _CAUSTICS_ON
 
-				half3 col = lerp(sceneColour, scatterCol, 1.0 - exp(-_DepthFogDensity.xyz * sceneZ));
+				float fogDistance = CrestWaterRayDistance(min(sceneZ, CrestFiniteCameraFarDepth()), view);
+				half3 col = lerp(sceneColour, scatterCol, 1.0 - exp(-max(_DepthFogDensity.xyz, 0.0) * fogDistance));
 
 				return half4(col, 1.0);
 			}

@@ -2,8 +2,10 @@
 
 `QualityRunner.cs` exercises the actual ocean shaders, Render Graph passes and
 camera rendering on a GPU. It targets Unity **6000.6.2f1 / URP 17.6.0**, the pinned
-versions of the example project. Results recorded on 2026-10-11 are in
-[URP-QUALITY-AUDIT.md](../../docs/URP-QUALITY-AUDIT.md).
+versions of the example project. Earlier GPU results recorded on 2026-10-11 are
+in [URP-QUALITY-AUDIT.md](../../docs/URP-QUALITY-AUDIT.md). Those results predate
+the specular AA diagnostic and the subsequent water quality changes; rerun this
+tool on the current revision to validate those changes.
 
 Run it **only in a disposable project copy**. The runner changes scenes, camera
 state, Graphics/Quality pipeline assignments, renderer settings and material
@@ -32,6 +34,7 @@ $unityEditor = 'E:/Games/Unity/Editor/6000.6.2f1/Editor/Unity.exe'
 $qualityLog = Join-Path $qualityProject 'quality-gpu.log'
 $qualityProcess = Start-Process -FilePath $unityEditor -ArgumentList @(
     '-force-d3d11', '-projectPath', $qualityProject,
+    '-crestSpecularAA', # Optional diagnostic; remove to skip its extra captures.
     '-executeMethod', 'QualityRunner.Start', '-logFile', $qualityLog
 ) -WindowStyle Hidden -PassThru
 $qualityProcess.Id
@@ -60,12 +63,41 @@ shader name. It does not replace Crest runtime scripts or scene assets.
 - Both fullscreen underwater composition paths; camera/target MSAA 1/2/4/8,
   render scale 0.75, and an orthographic rendering smoke check.
 - All seven shipped example scenes, exercised material-pass compilation,
-  ocean-tile existence, shader compiler errors and error-shader pixel checks.
+  ocean-tile existence, shader compiler errors, error-shader pixel checks and
+  finite HDR readback checks (including alpha) for every capture.
+- Optional specular AA off/on/off captures, enabled by `-crestSpecularAA`, with
+  generated high frequency normals, a narrow sun highlight and a black
+  reflection environment. Checks visible highlight contribution, an image
+  change when filtering is enabled, and recovery when variance is set to zero.
 - Optional original Built-in/URP surface comparison on the same geometry,
   frozen simulation time, camera, material keywords, single sun and fixed cubemap.
   Foam, scene refraction, shadows, caustics, albedo and planar reflection are
-  disabled for this comparison. This isolates surface shading rather than
-  comparing two complete projects.
+  disabled for this comparison. Specular AA is also disabled because the original
+  Built-in shader has no equivalent filter; the material's variance is restored
+  after comparison. This isolates surface shading rather than comparing two
+  complete projects.
+
+## Specular AA diagnostic
+
+The optional diagnostic writes `11d-specular-aa-off.png`,
+`11e-specular-aa-on.png`, and `11f-specular-aa-off-restored.png`. It uses a
+linear mipmapped procedural normal texture and freezes Crest simulation time,
+so the test does not depend on the example's normal texture or moving waves.
+The test changes only a temporary water material, temporary textures and the
+test sun, and restores their previous state before continuing the suite.
+
+The enabled capture uses variance **0.15** and threshold **0.2** with a
+directional highlight exponent of **4096**. This deliberately narrow highlight
+exercises the filter more strongly than many ordinary water materials. The
+assertion establishes that the shader consumes the controls and returns finite
+pixels. A nonzero image difference alone does not establish that the filtered
+image is more accurate.
+
+To evaluate appearance, compare a short camera-motion sequence with the filter
+off/on against a spatially supersampled reference. Inspect both near ripples and
+distant glints for flicker, excessive broadening and brightness changes. Repeat
+on the target graphics API and resolution, and measure GPU cost separately.
+This runner does not yet automate that temporal or reference-image evaluation.
 
 Image differences use linear RGB readback from a 960 × 540 ARGBHalf target:
 `mean(abs(deltaR) + abs(deltaG) + abs(deltaB))` over all pixels. Saved PNGs are
@@ -73,8 +105,9 @@ gamma-converted previews; assertions use the floating-point readback.
 
 The runner reports Unity Search indexing exceptions separately as `EDITOR`
 notes when their stack is in `UnityEditor.Search.SearchDatabase`. Actual runtime,
-shader and Render Graph errors remain fatal. The recorded final run has one
-such indexing note and no rendering errors.
+shader and Render Graph errors remain fatal. The earlier recorded final run had
+one such indexing note and no rendering errors; this does not describe a new
+run of the checks added since that recording.
 
 These checks do not establish full Built-in visual equivalence, all shader
 variants, player stripping, performance budgets, volume/stencil edge quality,

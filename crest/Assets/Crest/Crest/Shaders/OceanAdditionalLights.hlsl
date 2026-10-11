@@ -3,7 +3,7 @@
 #define CREST_OCEAN_ADDITIONAL_LIGHTS_INCLUDED
 
 void CrestAccumulateAdditionalLight(Light light, half3 normalWS, half3 view,
-    half3 scatterTint, half sss, bool underwater,
+    half3 scatterTint, half sss, bool underwater, float normalVariance,
     inout half3 scatter, inout half3 specular, inout half3 foam)
 {
 #if defined(_LIGHT_LAYERS)
@@ -18,19 +18,19 @@ void CrestAccumulateAdditionalLight(Light light, half3 normalWS, half3 view,
     scatter += (_SubSurfaceBase + _SubSurfaceSun * towardsLight) * _SubSurfaceColour.rgb * radiance * scatteringWeight;
 #endif
     // Retain the material's Crest highlight shape, with URP's range, cone, cookie and shadow attenuation.
-    specular += pow(saturate(dot(reflect(-view, normalWS), light.direction)), _AdditionalLightFallOff)
+    specular += CrestFilteredLightHighlight(dot(reflect(-view, normalWS), light.direction), _AdditionalLightFallOff, normalVariance)
         * _AdditionalLightBoost * radiance * ndl;
 #if _FOAM_ON
     foam += _FoamWhiteColor.rgb * _WaveFoamLightScale * radiance * ndl;
 #if _FOAM3DLIGHTING_ON
-    foam += pow(saturate(dot(reflect(-view, normalWS), light.direction)), _WaveFoamSpecularFallOff)
+    foam += CrestFilteredLightHighlight(dot(reflect(-view, normalWS), light.direction), _WaveFoamSpecularFallOff, normalVariance)
         * _WaveFoamSpecularBoost * radiance * ndl;
 #endif
 #endif
 }
 
 void CrestAdditionalLights(float3 positionWS, half3 normalWS, half3 view, float2 screenUV,
-    half seaDepth, half sss, bool underwater,
+    half seaDepth, half sss, bool underwater, float normalVariance,
     out half3 scatter, out half3 specular, out half3 foam)
 {
     scatter = specular = foam = 0.0h;
@@ -51,14 +51,14 @@ void CrestAdditionalLights(float3 positionWS, half3 normalWS, half3 view, float2
     {
         CLUSTER_LIGHT_LOOP_SUBTRACTIVE_LIGHT_CHECK
         Light light = GetAdditionalLight(lightIndex, positionWS, half4(1, 1, 1, 1));
-        CrestAccumulateAdditionalLight(light, normalWS, view, scatterTint, sss, underwater, scatter, specular, foam);
+        CrestAccumulateAdditionalLight(light, normalWS, view, scatterTint, sss, underwater, normalVariance, scatter, specular, foam);
     }
 #endif
     // Evaluate per pixel even for a per-vertex URP asset: large ocean tiles otherwise lose local highlights.
     uint lightCount = GetAdditionalLightsCount();
     LIGHT_LOOP_BEGIN(lightCount)
         Light light = GetAdditionalLight(lightIndex, positionWS, half4(1, 1, 1, 1));
-        CrestAccumulateAdditionalLight(light, normalWS, view, scatterTint, sss, underwater, scatter, specular, foam);
+        CrestAccumulateAdditionalLight(light, normalWS, view, scatterTint, sss, underwater, normalVariance, scatter, specular, foam);
     LIGHT_LOOP_END
 #endif
 }

@@ -7,13 +7,17 @@ It does not include the commercial Crest URP package.
 ## Target and validation status
 
 - Project target: **Unity 6000.6.2f1 / URP 17.6.0**.
+- **Latest changes after `2aaeec77`** add specular filtering, stable foam integration/sampling,
+  corrected water-path attenuation and caustics. Their validation is offline HLSL compilation,
+  C# syntax and numerical checks; **Unity/GPU validation has not been rerun for these changes**.
+  See [URP-REALISM-IMPROVEMENTS.md](URP-REALISM-IMPROVEMENTS.md) for results, material controls and limits.
 - Renderer: **Universal Renderer with Render Graph enabled**, initially Forward,
   Linear color, MSAA off, render scale 1.0. The 2D Renderer is not supported.
 - **Headless Unity import, C# API binding, pipeline creation, example asset conversion
   and configuration validation passed locally on Unity 6000.6.2f1 / URP 17.6.0.**
   The project includes the generated pipeline assets and converted example materials;
   see [static-check-results.md](static-check-results.md).
-- **The 2026-10-11 D3D11 quality run passed with 37 captured frames**: all seven
+- **The earlier `2aaeec77` D3D11 quality run passed on 2026-10-11 with 37 captured frames**: all seven
   example scenes, both fullscreen underwater paths, point/spot illumination and
   shadows, local highlights, probe box projection, selected transparent refraction,
   MSAA 1/2/4/8, render scale 0.75 and an orthographic smoke check.
@@ -50,7 +54,9 @@ a separate local compatibility test, not a tested configuration of this branch.
 | Examples | Surface Shaders and the gradient sky replaced with explicit URP passes; Standard/terrain materials and built-in default material references converted. The shared camera prefab includes URP camera data. Example custom camera commands now run after the water mask, before scene depth/opaques. Serialized BIRP `CameraEvent` values do not define URP execution order. |
 | Project setup | URP package/assembly references, missing Splines dependency, stable metadata for new files, repeatable setup/validation menus. |
 
-FFT/Gerstner generation, wave query and buoyancy algorithms are retained. The
+FFT/Gerstner generation, wave query and buoyancy algorithms are retained. Later
+foam changes use exact integration for decay/built-in generation and filtered far-field
+sampling; surface optics and shading changes are detailed in the realism report above. The
 offscreen simulation input shaders that use UnityCG remain explicit draw shaders;
 they do not require the built-in camera lighting or GrabPass pipeline.
 
@@ -92,11 +98,13 @@ they do not require the built-in camera lighting or GrabPass pipeline.
 
 ## 本地复核清单
 
-截至 2026-10-11，当前代码已在 Unity 6000.6.2f1 / URP 17.6.0 中重新编译和渲染。
-静态／数值回归与 37 帧 GPU 检查均通过，包含透明折射、局部光源、盒投影及
+2026-10-11 的前一轮 `2aaeec77` 基线已在 Unity 6000.6.2f1 / URP 17.6.0 中重新编译和渲染。
+该轮静态／数值回归与 37 帧 GPU 检查均通过，包含透明折射、局部光源、盒投影及
 两种全屏水下路径。详细范围、对照图和仍待验收的差距见
 [渲染质量复核报告](URP-QUALITY-AUDIT.md)；自动检查的复现步骤见
-[UnityQualityTests](../tools/UnityQualityTests/README.md)。以下仍是完整人工验收项：
+[UnityQualityTests](../tools/UnityQualityTests/README.md)。之后的高光、泡沫和光学修改
+尚未重跑 GPU 检查，优先复核 [新增项目](URP-REALISM-IMPROVEMENTS.md#5-本地画面验收与后续优先级)。
+以下仍是完整人工验收项：
 
 - [ ] **焦散位置**：浅水池底放置可辨识物体，分别从水上和水下观察；转动、平移相机，
   检查焦散贴合池底及遮挡物；远离原点后重复。对比新水下效果与旧 Curtain 路径。
@@ -149,8 +157,9 @@ balance, unsupported Surface Shader/GrabPass constructs, assembly JSON, package
 pinning, and metadata for new Unity assets.
 
 The targeted regression checks read the actual reconstruction expressions at all
-three caustic call sites and compare 243 points against camera-local ground truth,
-including rotated cameras, off-axis rays and large world offsets. They also check
+three caustic call sites, including the current shared helpers, and compare 1458
+points against camera-local ground truth. Cases include perspective/orthographic
+projection, depth conventions, refracted UVs, rotated cameras and large world offsets. They also check
 per-camera MSAA recording, all main/soft-shadow keyword groups, atlas cascade
 coordinates (including screen-shadow variants and the no-shadow sentinel), surface
 shadow routes and the reflection-probe blending API. These do not compile HLSL or

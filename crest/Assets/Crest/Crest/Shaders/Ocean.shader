@@ -59,6 +59,10 @@ Shader "Crest/Ocean"
 		_Specular("Specular", Range(0.0, 1.0)) = 0.7
 		// Controls blurriness of reflection
 		_Roughness("Roughness", Range(0.0, 1.0)) = 0.0
+		// Filter unresolved normal variation without flattening the visible waves. Zero restores unfiltered highlights.
+		_SpecularAAVariance("Specular Anti-Aliasing Variance", Range(0.0, 0.25)) = 0.15
+		// Limit the additional roughness so strong silhouettes do not blur the whole reflection.
+		_SpecularAAThreshold("Specular Anti-Aliasing Threshold", Range(0.0, 1.0)) = 0.2
 		// Controls harshness of Fresnel behaviour
 		_FresnelPower("Fresnel Power", Range(1.0, 20.0)) = 5.0
 		// Index of refraction of air. Can be increased to almost 1.333 to increase visibility up through water surface.
@@ -302,6 +306,7 @@ Shader "Crest/Ocean"
 
 			#include "OceanEmission.hlsl"
 			#include "OceanNormalMapping.hlsl"
+			#include "OceanSpecular.hlsl"
 			#include "OceanReflection.hlsl"
 			#include "OceanFoam.hlsl"
 			#include "OceanAdditionalLights.hlsl"
@@ -536,7 +541,7 @@ Shader "Crest/Ocean"
 				const float3 screenPos = input.screenPosXYW;
 				const float2 uvDepth = screenPos.xy / screenPos.z;
 
-				half3 view = normalize(_WorldSpaceCameraPos - input.worldPos);
+				half3 view = GetWorldSpaceNormalizeViewDir(input.worldPos);
 
 				// water surface depth, and underlying scene opaque surface depth
 				float pixelZ = CrestLinearEyeDepth(input.positionCS.z);
@@ -641,6 +646,7 @@ Shader "Crest/Ocean"
 				// Finalise normal
 				n_pixel.xz *= _NormalsStrengthOverall;
 				n_pixel = normalize( n_pixel );
+				float normalVariance = CrestSpecularNormalVariance(n_pixel);
 				if (underwater) n_pixel = -n_pixel;
 
 				// Foam - underwater bubbles and whitefoam
@@ -710,7 +716,7 @@ Shader "Crest/Ocean"
 				);
 
 				half3 additionalScatter, additionalSpecular, additionalFoam;
-				CrestAdditionalLights(input.worldPos, n_pixel, view, uvDepth, seaDepth, sss, underwater,
+				CrestAdditionalLights(input.worldPos, n_pixel, view, uvDepth, seaDepth, sss, underwater, normalVariance,
 					additionalScatter, additionalSpecular, additionalFoam);
 				scatterCol += additionalScatter;
 				half3 col = OceanEmission
@@ -756,7 +762,7 @@ Shader "Crest/Ocean"
 				else
 				#endif
 				{
-					ApplyReflectionSky(view, n_pixel, input.worldPos, lightDir, shadow.y, screenPos.xyzz, pixelZ, 1.0, col);
+					ApplyReflectionSky(view, n_pixel, input.worldPos, lightDir, shadow.y, screenPos.xyzz, pixelZ, 1.0, normalVariance, col);
 					col += additionalSpecular * CalculateFresnelReflectionCoefficient(saturate(dot(n_pixel, view))) * _Specular * reflAlpha;
 				}
 
@@ -803,6 +809,7 @@ Shader "Crest/Ocean"
 					depthFogDistance -= CrestLinearEyeDepth(rawFrontFaceZ);
 #endif
 					// underwater - do depth fog
+					depthFogDistance = CrestWaterRayDistance(depthFogDistance, view);
 					col = lerp(col, scatterCol, saturate(1. - exp(-_CrestDepthFogDensity.xyz * depthFogDistance)));
 				}
 #endif

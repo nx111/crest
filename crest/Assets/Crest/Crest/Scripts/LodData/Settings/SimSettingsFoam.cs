@@ -26,7 +26,7 @@ namespace Crest
         [Header("General settings")]
         [Tooltip("Prewarms the simulation on load and teleports. Results are only an approximation but are better than no foam.")]
         public bool _prewarm = true;
-        [Range(0f, 20f), Tooltip("Speed at which foam fades/dissipates.")]
+        [Range(0f, 20f), Tooltip("Exponential rate at which foam fades/dissipates, per second. Zero disables fading and steady-state prewarming.")]
         public float _foamFadeRate = 0.8f;
 
         [Header("Whitecaps")]
@@ -67,7 +67,7 @@ namespace Crest
             {
                 showMessage
                 (
-                    "<i>Filter Waves</i> is higher than the recommended maximum (LOD count - 2). There will be no whiecaps.",
+                    "<i>Filter Waves</i> is higher than the recommended maximum (LOD count - 2). Only the largest available waves will be sampled, which may suppress whitecaps.",
                     "Reduce <i>Filter Waves</i>.",
                     ValidatedHelper.MessageType.Warning, this
                 );

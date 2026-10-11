@@ -64,6 +64,74 @@ float CrestLinearEyeDepth(const float i_rawDepth)
 #endif // _PROJECTION
 }
 
+bool CrestIsDepthBehind(const float i_rawDepth, const float i_rawSurfaceDepth)
+{
+#if UNITY_REVERSED_Z
+	return i_rawDepth < i_rawSurfaceDepth;
+#else
+	return i_rawDepth > i_rawSurfaceDepth;
+#endif
+}
+
+bool CrestHasSceneDepth(const float i_rawDepth)
+{
+#if UNITY_REVERSED_Z
+	return i_rawDepth > 0.0;
+#else
+	return i_rawDepth < 1.0;
+#endif
+}
+
+#if defined(CREST_URP)
+float3 CrestReconstructWorldPosition(const float2 i_positionNDC, float i_rawDepth)
+{
+	// Depth textures are [0, 1]. OpenGL's inverse projection expects [-1, 1].
+	// The inverse view-projection also preserves orthographic ray origins and the selected XR eye.
+#if !UNITY_REVERSED_Z
+	i_rawDepth = lerp(UNITY_NEAR_CLIP_VALUE, 1.0, i_rawDepth);
+#endif
+	return ComputeWorldSpacePosition(i_positionNDC, i_rawDepth, UNITY_MATRIX_I_VP);
+}
+
+float3 CrestReconstructViewPosition(const float2 i_positionNDC, float i_rawDepth)
+{
+#if !UNITY_REVERSED_Z
+	i_rawDepth = lerp(UNITY_NEAR_CLIP_VALUE, 1.0, i_rawDepth);
+#endif
+	// The utility applies the supplied inverse matrix. Passing inverse projection
+	// keeps both endpoints in view space, where centimetre-scale lengths survive
+	// even at large world coordinates. No extra handedness/Z flip is applied.
+	return ComputeWorldSpacePosition(i_positionNDC, i_rawDepth, UNITY_MATRIX_I_P);
+}
+
+float3 CrestViewDirectionFromViewPosition(const float3 i_positionVS)
+{
+	// Rotate a view-space direction; never subtract large absolute positions.
+	// Orthographic rays all point towards the camera's local +Z axis.
+	const float3 viewVS = unity_OrthoParams.w > 0.5 ? float3(0.0, 0.0, 1.0) : -i_positionVS;
+	return normalize(mul((float3x3)UNITY_MATRIX_I_V, viewVS));
+}
+
+float CrestFiniteCameraFarDepth()
+{
+	// A sky sample can unproject at infinity with a far/infinite projection. Keep
+	// fog arithmetic finite, especially when a density channel is exactly zero.
+	return clamp(_ProjectionParams.z, 0.0, 1.0e10);
+}
+#endif
+
+float CrestWaterRayDistance(const float i_eyeDepthDistance, const float3 i_view)
+{
+#if defined(CREST_URP)
+	// Beer-Lambert attenuation needs distance along the ray, not the camera's Z axis.
+	// Orthographic rays are parallel to that axis, regardless of the pixel's world position.
+	const float alignment = unity_OrthoParams.w > 0.5 ? 1.0 : abs(dot(UNITY_MATRIX_I_V._13_23_33, i_view));
+	return max(i_eyeDepthDistance, 0.0) / max(alignment, 0.0001);
+#else
+	return max(i_eyeDepthDistance, 0.0);
+#endif
+}
+
 #ifdef TEXTURE2D_X
 // Works for all pipelines.
 float CrestMultiSampleDepth

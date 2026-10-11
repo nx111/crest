@@ -39,7 +39,20 @@ half WhiteFoamTexture
 
 	// black point fade
 	i_foam = saturate(1. - i_foam);
-	return smoothstep(i_foam, i_foam + _WaveFoamFeather, ft);
+	// Resolve a subpixel foam edge over at least its pixel footprint. Preserve the
+	// lower threshold so a zero simulation value cannot create spurious whitecaps.
+	const float feather = max(max(_WaveFoamFeather, 0.001), fwidth(ft - i_foam));
+	return smoothstep(i_foam, i_foam + feather, ft);
+}
+
+float CrestBubbleFoamLod(float2 uv, float textureSize)
+{
+	const float2 dx = ddx(uv) * textureSize;
+	const float2 dy = ddy(uv) * textureSize;
+	const float footprintSquared = max(dot(dx, dx), dot(dy, dy));
+	// Keep the original close-up bubble blur but let the mip grow at distance.
+	// A fixed mip 3 undersamples the texture near the horizon.
+	return max(3.0, 0.5 * log2(max(footprintSquared, 1.0)));
 }
 
 half BubbleFoamTexture
@@ -61,11 +74,17 @@ half BubbleFoamTexture
 	float2 windDir = float2(0.866, 0.5);
 	float2 foamUVBubbles0 = (lerp(i_worldXZ.undisplaced0, i_worldXZ.displaced0, 0.7) + 0.5 * _CrestTime * windDir) / i_texture._scale + 0.125 * i_n.xz;
 	float2 foamUVBubbles1 = (lerp(i_worldXZ.undisplaced1, i_worldXZ.displaced1, 0.7) + 0.5 * _CrestTime * windDir) / i_texture._scale + 0.125 * i_n.xz;
-	float2 parallaxOffset = -_FoamBubbleParallax * i_view.xz / dot(i_n, i_view);
+	// Bound the grazing-angle offset and keep the coordinate continuous through
+	// a back-facing wave normal instead of dividing by zero or reversing the UVs.
+	float2 parallaxOffset = -_FoamBubbleParallax * i_view.xz / max(abs(dot(i_n, i_view)), 0.1);
+	const float2 bubbleUV0 = (scale * foamUVBubbles0 + parallaxOffset) / (cascadeData0._scale / 25.0);
+	const float2 bubbleUV1 = (scale * foamUVBubbles1 + parallaxOffset) / (cascadeData1._scale / 25.0);
+	const float bubbleLod0 = CrestBubbleFoamLod(bubbleUV0, i_texture._size);
+	const float bubbleLod1 = CrestBubbleFoamLod(bubbleUV1, i_texture._size);
 	half ft = lerp
 	(
-		i_texture.SampleLevel((scale * foamUVBubbles0 + parallaxOffset) / (cascadeData0._scale / 25.0), 3.0).r,
-		i_texture.SampleLevel((scale * foamUVBubbles1 + parallaxOffset) / (cascadeData1._scale / 25.0), 3.0).r,
+		i_texture.SampleLevel(bubbleUV0, bubbleLod0).r,
+		i_texture.SampleLevel(bubbleUV1, bubbleLod1).r,
 		lodVal
 	);
 
@@ -118,10 +137,10 @@ void ComputeFoam
 
 #if _TRANSPARENCY_ON
 	// feather foam very close to shore
-	foamAmount *= saturate((i_sceneZ - i_pixelZ) / _ShorelineFoamMinDepth);
+	foamAmount *= saturate((i_sceneZ - i_pixelZ) / max(_ShorelineFoamMinDepth, 0.0001));
 #endif
 
-	// Additive underwater foam - use same foam texture but add mip bias to blur for free
+	// Additive underwater foam - use blurred mips of the same texture.
 	half bubbleFoamTexValue = BubbleFoamTexture(i_texture, worldXZ, i_n, i_view, lodVal, cascadeData0, cascadeData1);
 	o_bubbleCol = (half3)bubbleFoamTexValue * _FoamBubbleColor.rgb * saturate(i_foam * _WaveFoamBubblesCoverage) * WaveHarmonic::Crest::AmbientLight();
 

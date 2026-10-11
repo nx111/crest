@@ -1,5 +1,6 @@
 > **urp branch — Unity 6000.6 / URP 17.6**
-> Independent source port using Render Graph. The example project is configured for URP; local Unity 6000.6.2f1 import, C# compilation and D3D11 rendering smoke checks passed.
+> Independent source port using Render Graph. The example project is configured for URP; the earlier `2aaeec77` baseline passed local Unity 6000.6.2f1 import, C# compilation and D3D11 rendering checks.
+> Subsequent [realism improvements](docs/URP-REALISM-IMPROVEMENTS.md) add specular filtering, stable foam and corrected water optics; they have offline validation and still need Unity/GPU review.
 > Start with [setup and local verification checklist](docs/URP-MIGRATION.md).
 
 <div align="center">

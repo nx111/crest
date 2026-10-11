@@ -116,7 +116,11 @@ bool CrestApplyUnderwaterFog(const float2 positionNDC, const float3 positionWS, 
 
 	half3 lightColor = _LightColor0.rgb;
 	float3 lightDirection = WaveHarmonic::Crest::WorldSpaceLightDir(positionWS);
-	half3 view =  normalize(_WorldSpaceCameraPos - positionWS);
+#if defined(CREST_URP)
+	float3 view = GetWorldSpaceNormalizeViewDir(positionWS);
+#else
+	float3 view = normalize(_WorldSpaceCameraPos - positionWS);
+#endif
 
 	// Get the largest distance.
 	float rawFogDistance = deviceDepth;
@@ -136,6 +140,7 @@ bool CrestApplyUnderwaterFog(const float2 positionNDC, const float3 positionWS, 
 		fogDistance -= CrestLinearEyeDepth(rawFrontFaceZ);
 	}
 #endif
+	fogDistance = CrestWaterRayDistance(fogDistance, view);
 
 	half shadow = 1.0;
 #if CREST_SHADOWS_ON

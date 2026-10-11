@@ -26,6 +26,23 @@ bool _NeedsPrewarming;
 uint _CrestMinimumWavesSlice;
 CBUFFER_END
 
+// Exact solution of d(foam)/dt = source - fadeRate * foam for a constant source
+// during one step. The small-exponent series avoids cancellation (and 0 / 0)
+// when fading is disabled. Keep this in float even with an R16 simulation target.
+float2 CrestFoamDecayAndSource(float deltaTime, float fadeRate)
+{
+	const float dt = max(deltaTime, 0.0);
+	const float rate = max(fadeRate, 0.0);
+	const float exponent = rate * dt;
+	const float decay = exp(-exponent);
+	float sourceWeight = dt * (1.0 - exponent * (0.5 - exponent / 6.0));
+	if (exponent > 0.001)
+	{
+		sourceWeight = (1.0 - decay) / rate;
+	}
+	return float2(decay, sourceWeight);
+}
+
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, 1)]
 void UpdateFoam(uint3 id : SV_DispatchThreadID)
 {
@@ -42,7 +59,7 @@ void UpdateFoam(uint3 id : SV_DispatchThreadID)
 	const CascadeParams cascadeData = _CrestCascadeData[sliceIndex];
 	const float2 worldPosXZ = UVToWorld(input_uv, sliceIndex, cascadeData);
 	const float3 uv_slice = float3(input_uv, id.z);
-	half foam = 0.0;
+	float foam = 0.0;
 
 	// Sample from previous frame.
 	{
@@ -72,15 +89,25 @@ void UpdateFoam(uint3 id : SV_DispatchThreadID)
 		}
 	}
 
-	// fade
-	foam *= max(0.0, 1.0 - _FoamFadeRate * _SimDeltaTime);
+	// Integrate both loss and generation over the same step. Euler fading changes
+	// foam lifetime with simulation frequency and erases history when rate * dt >= 1.
+	const float2 decayAndSource = CrestFoamDecayAndSource(_SimDeltaTime, _FoamFadeRate);
+	foam *= decayAndSource.x;
+	float waveSourceWeight = decayAndSource.y;
+	float shoreSourceWeight = decayAndSource.y;
 
-	// Prewarm wave foam. 1.0 / _FoamFadeRate perfectly matches a paused ocean in edit mode, but this is an unnatural
-	// accumulation of foam and causes overshoots when _WaveFoamStrength is less than 1.0.
-	float simDeltaTime = _NeedsPrewarming ? max(_SimDeltaTime, min(1.0, _WaveFoamStrength - 1.0) / _FoamFadeRate) : _SimDeltaTime;
+	// Approximate a developed shoreline after loading or teleporting. Keep the
+	// existing weaker wave prewarm to avoid covering small waves in fresh foam.
+	// With no fading there is no finite steady state: accumulate only the real dt.
+	if (_NeedsPrewarming && _FoamFadeRate > 0.0)
+	{
+		const float prewarmTime = 1.0 / max(_FoamFadeRate, 0.0001);
+		waveSourceWeight = max(waveSourceWeight, saturate(_WaveFoamStrength - 1.0) * prewarmTime);
+		shoreSourceWeight = max(shoreSourceWeight, prewarmTime);
+	}
 
 	// Sample displacement texture and generate foam from it
-	const float wavesSliceIndex = max(_CrestMinimumWavesSlice, id.z);
+	const float wavesSliceIndex = min(max(_CrestMinimumWavesSlice, id.z), depth - 1.0);
 	const CascadeParams wavesCascadeParams = _CrestCascadeData[wavesSliceIndex];
 	const float3 wavesUV = WorldToUV(worldPosXZ, wavesCascadeParams, wavesSliceIndex);
 	const float3 dd = float3(wavesCascadeParams._oneOverTextureRes, 0.0, wavesCascadeParams._texelWidth);
@@ -99,18 +126,14 @@ void UpdateFoam(uint3 id : SV_DispatchThreadID)
 	const float2x2 jacobian = (float4(disp_x.xz, disp_z.xz) - disp.xzxz) / wavesCascadeParams._texelWidth;
 	// Determinant is < 1 for pinched, < 0 for overlap/inversion
 	const float det = determinant( jacobian );
-	foam += 5.0 * simDeltaTime * _WaveFoamStrength * saturate( _WaveFoamCoverage - det + foamBase * 0.7 );
-
-	// Prewarm shoreline foam. 1.0 / _FoamFadeRate perfectly matches a paused ocean in edit mode which is fine for
-	// shoreline foam.
-	simDeltaTime = _NeedsPrewarming ? (1.0 / _FoamFadeRate) : _SimDeltaTime;
+	foam += 5.0 * waveSourceWeight * _WaveFoamStrength * saturate( _WaveFoamCoverage - det + foamBase * 0.7 );
 
 	// Add foam in shallow water. use the displaced position to ensure we add foam where world objects are.
 	const float3 uv_slice_displaced = WorldToUV(worldPosXZ + disp.xz, cascadeData, sliceIndex);
 	half2 terrainHeight_seaLevelOffset = _LD_TexArray_SeaFloorDepth.SampleLevel(LODData_linear_clamp_sampler, uv_slice_displaced, 0.0).xy;
 	terrainHeight_seaLevelOffset.x = max(terrainHeight_seaLevelOffset.x, -CREST_FLOAT_MAXIMUM);
 	const half signedOceanDepth = _OceanCenterPosWorld.y - terrainHeight_seaLevelOffset.x + terrainHeight_seaLevelOffset.y + disp.y;
-	foam += _ShorelineFoamStrength * simDeltaTime * saturate(1.0 - signedOceanDepth / _ShorelineFoamMaxDepth);
+	foam += _ShorelineFoamStrength * shoreSourceWeight * saturate(1.0 - signedOceanDepth / max(_ShorelineFoamMaxDepth, 0.0001));
 
 	_LD_TexArray_Target[id] = saturate(foam);
 }

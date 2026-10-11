@@ -128,6 +128,8 @@ half3 _SubSurfaceShallowColShadow;
 
 half _Specular;
 half _Roughness;
+half _SpecularAAVariance;
+half _SpecularAAThreshold;
 half _FresnelPower;
 float _RefractiveIndexOfAir;
 float _RefractiveIndexOfWater;

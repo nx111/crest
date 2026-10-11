@@ -77,7 +77,7 @@ real4 Frag (Varyings input) : SV_Target
 	float rawDepth = LOAD_TEXTURE2D_X(_CameraDepthTexture, positionSS).r;
 
 	// Discard the background for overlays.
-	if (_CrestIsOverlay && rawDepth == 0.0)
+	if (_CrestIsOverlay && !CrestHasSceneDepth(rawDepth))
 	{
 		discard;
 	}
@@ -104,7 +104,7 @@ real4 Frag (Varyings input) : SV_Target
 		0.0
 	);
 
-	float fogDistance = sceneZ;
+	float fogDistance = min(sceneZ, CrestFiniteCameraFarDepth());
 	float meniscusDepth = 0.0;
 #if CREST_WATER_VOLUME
 	ApplyWaterVolumeToUnderwaterFogAndMeniscus(input.positionCS, fogDistance, meniscusDepth);
@@ -118,12 +118,15 @@ real4 Frag (Varyings input) : SV_Target
 	{
 		// Position needs to be reconstructed in the fragment shader to avoid precision issues as per
 		// Unity's lead. Fixes caustics stuttering when far from zero.
-		const float3 positionWS = ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
-		const half3 view = normalize(_WorldSpaceCameraPos - positionWS);
-		float3 scenePos = _WorldSpaceCameraPos - view * sceneZ / dot(UNITY_MATRIX_I_V._13_23_33, view);
+		// A depth of 0.5 gives the same view ray without the sky's far-plane singularity.
+		const float reconstructionDepth = CrestHasSceneDepth(rawDepth) ? rawDepth : 0.5;
+		const float3 scenePosVS = CrestReconstructViewPosition(uv, reconstructionDepth);
+		const float3 scenePos = mul(UNITY_MATRIX_I_V, float4(scenePosVS, 1.0)).xyz;
+		const float3 view = CrestViewDirectionFromViewPosition(scenePosVS);
+		fogDistance = CrestWaterRayDistance(fogDistance, view);
 		const Light lightMain = GetMainLight();
 		const real3 lightDir = lightMain.direction;
-		const real3 lightCol = lightMain.color;
+		const real3 lightCol = lightMain.color * lightMain.distanceAttenuation;
 		sceneColour = ApplyUnderwaterEffect
 		(
 			positionSS,

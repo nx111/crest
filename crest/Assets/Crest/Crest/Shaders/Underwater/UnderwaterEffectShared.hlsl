@@ -109,7 +109,7 @@ void GetOceanSurfaceAndUnderwaterData
 	const float oceanDepthTolerance
 )
 {
-	hasCaustics = rawDepth != 0.0;
+	hasCaustics = CrestHasSceneDepth(rawDepth);
 	isOceanSurface = false;
 	isUnderwater = mask <= CREST_MASK_BELOW_SURFACE;
 
@@ -151,7 +151,8 @@ void GetOceanSurfaceAndUnderwaterData
 #else
 		rawDepth = rawOceanDepth;
 #endif
-		sceneZ = CrestLinearEyeDepth(CREST_MULTILOAD_DEPTH(_CrestOceanMaskDepthTexture, positionSS, rawDepth));
+		rawDepth = CREST_MULTILOAD_DEPTH(_CrestOceanMaskDepthTexture, positionSS, rawDepth);
+		sceneZ = CrestLinearEyeDepth(rawDepth);
 	}
 	else
 	{
@@ -161,9 +162,13 @@ void GetOceanSurfaceAndUnderwaterData
 		sceneZ = CrestLinearEyeDepth(rawDepth);
 #else
 		// For small water volumes this will have the opposite effect.
-		sceneZ = CrestLinearEyeDepth(CREST_MULTILOAD_SCENE_DEPTH(positionSS, rawDepth));
+		rawDepth = CREST_MULTILOAD_SCENE_DEPTH(positionSS, rawDepth);
+		sceneZ = CrestLinearEyeDepth(rawDepth);
 #endif
 	}
+	// Keep reconstruction and fog on the same resolved depth, including the MSAA
+	// silhouette dilation above. A resolved far-plane sample has no caustic receiver.
+	hasCaustics = hasCaustics && CrestHasSceneDepth(rawDepth);
 }
 
 #ifdef CREST_OCEAN_EMISSION_INCLUDED

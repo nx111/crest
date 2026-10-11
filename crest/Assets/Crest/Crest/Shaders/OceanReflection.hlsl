@@ -50,6 +50,7 @@ void ApplyReflectionSky
 	in const half4 i_screenPos,
 	in const float i_pixelZ,
 	in const half i_weight,
+	in const float i_normalVariance,
 	inout half3 io_col
 )
 {
@@ -73,7 +74,8 @@ void ApplyReflectionSky
 	skyColour = val.rgb;
 #else
 #if defined(CREST_URP)
-    skyColour = GlossyEnvironmentReflection(refl, i_positionWS, _Roughness, 1.0h, i_screenPos.xy / i_screenPos.w);
+    float perceptualRoughness = CrestFilteredPerceptualRoughness(_Roughness, i_normalVariance);
+    skyColour = GlossyEnvironmentReflection(refl, i_positionWS, perceptualRoughness, 1.0h, i_screenPos.xy / i_screenPos.w);
 #else
 	Unity_GlossyEnvironmentData envData;
 	envData.roughness = _Roughness;
@@ -108,14 +110,15 @@ void ApplyReflectionSky
 	// Add primary light
 #if _COMPUTEDIRECTIONALLIGHT_ON
 #if _DIRECTIONALLIGHTVARYROUGHNESS_ON
-	half fallOffAlpha = saturate(i_pixelZ / _DirectionalLightFarDistance);
+	half fallOffAlpha = saturate(i_pixelZ / max(_DirectionalLightFarDistance, 0.001));
 	fallOffAlpha = sqrt(fallOffAlpha);
 	half fallOff = lerp(_DirectionalLightFallOff, _DirectionalLightFallOffFar, fallOffAlpha);
 #else
 	half fallOff = _DirectionalLightFallOff;
 #endif
 
-	skyColour += pow(max(0., dot(refl, i_lightDir)), fallOff) * _DirectionalLightBoost * _LightColor0 * i_shadow;
+	skyColour += CrestFilteredLightHighlight(dot(refl, i_lightDir), fallOff, i_normalVariance)
+		* _DirectionalLightBoost * _LightColor0 * i_shadow;
 #endif
 
 	// Fresnel

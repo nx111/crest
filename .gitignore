@@ -4,3 +4,6 @@
 .vscode/
 .mono/
 *.code-workspace
+
+# Python verification tools
+__pycache__/
