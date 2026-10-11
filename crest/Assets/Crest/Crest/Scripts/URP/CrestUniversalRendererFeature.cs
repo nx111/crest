@@ -66,7 +66,7 @@ namespace Crest
                 public UnderwaterRenderer underwater;
                 public RenderTextureDescriptor descriptor;
                 public int shadowCascadeCount;
-                public Matrix4x4 view, projection;
+                public Matrix4x4 view, projection, gpuProjection;
                 public TextureHandle color, depth, copy, opaque;
                 public bool effect;
             }
@@ -111,7 +111,8 @@ namespace Crest
                     data.descriptor = descriptor;
                     data.shadowCascadeCount = shadowData.mainLightShadowCascadesCount;
                     data.view = cameraData.GetViewMatrix();
-                    data.projection = GL.GetGPUProjectionMatrix(cameraData.GetProjectionMatrix(),
+                    data.projection = cameraData.GetProjectionMatrix();
+                    data.gpuProjection = GL.GetGPUProjectionMatrix(data.projection,
                         !resources.isActiveTargetBackBuffer || cameraData.targetTexture != null);
                     data.effect = effect;
                     data.color = resources.activeColorTexture;
@@ -179,7 +180,18 @@ namespace Crest
             {
                 // Explicit simulation draws change the legacy camera state and target viewport.
                 cmd.SetupCameraProperties(pass.camera);
-                RenderingUtils.SetViewAndProjectionMatrices(cmd, pass.view, pass.projection, true);
+                // Match URP's camera setup: native camera state takes the non-GPU projection.
+                // Overwriting only global GPU matrices can disagree with legacy camera constants
+                // and flip opaque geometry on Vulkan while offscreen captures still look correct.
+                cmd.SetViewProjectionMatrices(pass.view, pass.projection);
+                var inverseView = pass.view.inverse;
+                var inverseProjection = pass.gpuProjection.inverse;
+                var worldToCamera = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) * pass.view;
+                cmd.SetGlobalMatrix("unity_WorldToCamera", worldToCamera);
+                cmd.SetGlobalMatrix("unity_CameraToWorld", worldToCamera.inverse);
+                cmd.SetGlobalMatrix("unity_MatrixInvV", inverseView);
+                cmd.SetGlobalMatrix("unity_MatrixInvP", inverseProjection);
+                cmd.SetGlobalMatrix("unity_MatrixInvVP", inverseView * inverseProjection);
                 cmd.SetViewport(new Rect(0, 0, pass.descriptor.width, pass.descriptor.height));
             }
         }

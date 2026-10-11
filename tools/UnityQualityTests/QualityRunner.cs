@@ -14,7 +14,7 @@ using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
 [InitializeOnLoad]
-public static class QualityRunner
+public static partial class QualityRunner
 {
     const string Running = "CrestQualityRunning";
     const string FailureLog = "CrestQualityFailureLog";
@@ -54,7 +54,9 @@ public static class QualityRunner
                 Application.runInBackground = true;
                 ShaderUtil.allowAsyncCompilation = false;
                 ListenForLogs();
-                _routine = Run();
+                if (Environment.GetCommandLineArgs().Contains("-crestLeakStacks"))
+                    Unity.Collections.NativeLeakDetection.Mode = Unity.Collections.NativeLeakDetectionMode.EnabledWithStackTrace;
+                _routine = Environment.GetCommandLineArgs().Contains("-crestQueryOnly") ? RunQueryOnly() : Run();
                 EditorApplication.update -= Tick;
                 EditorApplication.update += Tick;
             }
@@ -73,9 +75,25 @@ public static class QualityRunner
             SessionState.SetString(FailureLog, string.Empty);
             SessionState.SetBool(Running, true);
             ListenForLogs();
+            if (Environment.GetCommandLineArgs().Contains("-crestLeakStacks"))
+                Unity.Collections.NativeLeakDetection.Mode = Unity.Collections.NativeLeakDetectionMode.EnabledWithStackTrace;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             Directory.CreateDirectory(Output);
+            // executeMethod can run before Unity 6000.6 has initialized the Hierarchy view model.
+            // Run scene/UI work after the first inspector update, while preserving early log collection.
+            EditorApplication.delayCall += InitializeRun;
+        }
+        catch (Exception exception)
+        {
+            Fail(exception);
+        }
+    }
+
+    static void InitializeRun()
+    {
+        try
+        {
             CrestURPSetup.ValidatePipeline();
             SessionState.SetBool(SpecularAA, Environment.GetCommandLineArgs().Contains("-crestSpecularAA"));
             EditorSceneManager.OpenScene(Main);
@@ -118,6 +136,16 @@ public static class QualityRunner
         }
     }
 
+    static IEnumerator RunQueryOnly()
+    {
+        for (int frame = 0; frame < 30; frame++) yield return null;
+        var type = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("RuntimeQueryAudit")).FirstOrDefault(t => t != null);
+        Check(type != null, "Shared native query diagnostic installed");
+        var routine = (IEnumerator)type.GetMethod("Run").Invoke(null,
+            new object[] { new Action<bool, string>(Check), new Action<string>(Results.Add) });
+        while (routine.MoveNext()) yield return routine.Current;
+    }
+
     static void Fail(Exception exception)
     {
         Results.Add("FAIL: " + exception);
@@ -131,6 +159,14 @@ public static class QualityRunner
         {
             exit = 1;
             Results.Add("FAIL: Captured Unity errors:\n" + Errors);
+        }
+        if (exit == 0 && Environment.GetCommandLineArgs().Contains("-crestQuitAudit"))
+        {
+            var audit = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("RuntimeQueryAudit"))
+                .FirstOrDefault(type => type != null);
+            audit.GetMethod("PrepareShutdown").Invoke(null, new object[] {
+                new Action<bool, string>(Check), new Action<string>(Results.Add),
+                new Action<bool>(passed => File.WriteAllLines(Path.Combine(Output, "results.txt"), Results)) });
         }
         EditorApplication.update -= Tick;
         EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
@@ -609,6 +645,13 @@ public static class QualityRunner
                 .SelectMany(r => r.sharedMaterials).Where(m => m != null).Distinct())
                 for (var pass = 0; pass < material.passCount; pass++) ShaderUtil.CompilePass(material, pass, true);
             Capture("scene-" + Path.GetFileName(scene));
+        }
+
+        if (Environment.GetCommandLineArgs().Contains("-crestRealismAudit"))
+        {
+            var audit = typeof(QualityRunner).GetMethod("RunRealismAudit", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            Check(audit != null, "RealismAudit.cs was installed for the optional realism audit");
+            foreach (var unused in (IEnumerable<object>)audit.Invoke(null, null)) yield return unused;
         }
 
         var referenceShader = Shader.Find("Crest/Ocean Builtin Reference");

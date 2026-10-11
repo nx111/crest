@@ -1,0 +1,10 @@
+// Diagnostic kernel: production QueryBase / native GPU readbacks, known coordinate outputs.
+// This kernel tests registration ownership; production water queries are tested separately.
+#pragma kernel CSMain
+StructuredBuffer<float3> _QueryPositions_MinGridSizes;
+RWStructuredBuffer<float3> _AuditResults;
+[numthreads(64, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    _AuditResults[id.x] = _QueryPositions_MinGridSizes[id.x];
+}

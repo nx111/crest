@@ -47,7 +47,8 @@ def main():
         env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_NOLOGO="1")
         build = subprocess.run(
             [dotnet, "build", "--nologo", "--verbosity", "quiet"],
-            cwd=project, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cwd=project, env=env, text=True, encoding="utf-8", errors="replace",
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         if build.returncode:
             print(build.stdout, end="")

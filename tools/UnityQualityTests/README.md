@@ -60,7 +60,7 @@ $qualityProcess = Start-Process -FilePath $unityEditor -ArgumentList @(
     '-force-d3d11', '-projectPath', $qualityProject,
     '-crestSpecularAA', # Optional diagnostic; remove to skip its extra captures.
     '-executeMethod', 'QualityRunner.Start', '-logFile', $qualityLog
-) -WindowStyle Hidden -PassThru
+) -WindowStyle Normal -PassThru
 $qualityProcess.Id
 ```
 
@@ -69,6 +69,62 @@ The initial import may take several minutes. Do **not** add `-batchmode`,
 needs a graphics device, and exits itself after the captures. A successful run
 prints `CREST_QUALITY_RESULT PASS`, writes `QualityCaptures/results.txt` and PNGs,
 and exits with code 0. A failed assertion or rendering exception exits with code 1.
+The runner installs its log listener before opening scenes, defers that initialization
+until the editor UI is ready, and preserves startup failures across the Play Mode
+domain reload. Inspect the complete process log after exit as well as the results
+file: native shutdown leaks can occur after the managed test reports PASS.
+
+For the native query and shutdown audit, copy `RuntimeQueryAudit.cs` outside Editor
+and `AuditQueryCoordinates.compute` into `Assets/Resources` in the disposable copy.
+Add `-crestQueryOnly -crestQuitAudit -crestLeakStacks` to run just these checks.
+The shutdown audit deliberately leaves a live provider and an already-cleaned
+provider with pending native requests, then verifies their resources in the quit
+event. Full quality checks remain the default when `-crestQueryOnly` is absent.
+
+The Player audit additionally uses `PlayerAudit.cs`, `PlayerRetest.cs` and
+`PlayerGpuContracts.cs` outside Editor; install its builders in `Assets/Editor`.
+Use `-crestQueryAudit -crestQuitAudit -crestFoamStorage -crestPerformanceAB` for
+the extended diagnostics. Android `run_android_audit.py` accepts these via `--extra`,
+checks the app's own logcat including native teardown, and reconnects a dropped
+Wi-Fi ADB endpoint. `-crestBackgroundAudit` exercises Home/resume on that test app.
+Run all Unity builds serially, especially on a mechanical disk.
+
+Add `-crestScreenAudit` to save the actual game screen before and after the first
+`SingleCameraRequest` capture. Inspect `screen-main-before-offscreen.png` and
+`screen-main-after-offscreen.png` as well as the offscreen `scene-main.png`.
+Finite offscreen pixels alone cannot detect a camera-state error affecting the
+device's main framebuffer. An ADB screenshot also verifies the phone's displayed
+image; the driver's first `device-screen.png` may still show the Unity splash.
+On Android, the screen-capture API appends the app's persistent directory, so the
+audit passes a relative filename after resolving the host's `/sdcard` alias.
+It also checks that both screen files were saved.
+
+For a reported brief Windows flash, also install `PlayerTemporalAudit.cs` and
+add `-crestTemporalAudit`. It records every actual game frame through asynchronous
+readback, adds 360 steady Main frames, and writes 320x180 JPEG previews to
+`game-frames.zip` with camera, scene and test-phase metadata. Missing frames or
+readback errors fail the recorder check. Review transitions as well as static
+frames; passing pixel checks does not establish temporal stability. Recording
+adds GPU/readback/encoding cost, so use a separate run for performance timing.
+It replaces `-crestScreenAudit` when both are requested, avoiding conflicting
+screen-capture operations in the same frame. `analyze_game_frames.py` ranks
+same-camera, same-scene three-frame changes for visual review and preserves
+camera cuts as metadata. JPEGs retain backend readback row order; orient review
+figures appropriately. Image-difference scores alone do not certify stability.
+
+The performance audit records requested, compatible and actual foam formats.
+Its temporary settings survive ocean reconstruction and are restored afterward.
+If the device selects a half-float fallback for an R32 request, the full-scene
+R32 cost comparison is explicitly skipped. The separate small compute decay
+test has different filtering/texture support requirements and does not establish
+that the full ocean's R32 texture is supported.
+
+`MinimalAndroidBuilder.cs`, `MinimalAndroidLifetime.cs` and `run_minimal_android.py`
+provide a separate empty-project Android startup control, without Crest or URP.
+The example project's `Development/Editor/AndroidAssetPackDependency.cs` works
+around the confirmed Unity 6000.6.2f1 AssetPackManager startup error by adding the
+official Play Asset Delivery 2.3.0 dependency if it is absent. It applies only to
+that engine version; keep it in the project when building the Android example.
 
 If the reference extractor was omitted, the run explicitly reports the Built-in
 comparison as skipped. The extractor copies the original `Ocean.shader` and its

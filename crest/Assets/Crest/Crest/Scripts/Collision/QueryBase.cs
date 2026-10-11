@@ -165,10 +165,17 @@ namespace Crest
             if (_shaderProcessQueries == null)
             {
                 Debug.LogError($"Crest: Could not load Query compute shader {QueryShaderName}");
+                CleanUp();
                 return;
             }
             _kernelHandle = _shaderProcessQueries.FindKernel(QueryKernelName);
             _wrapper = new PropertyWrapperComputeStandalone(_shaderProcessQueries, _kernelHandle);
+
+            Application.quitting += OnQuitting;
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.quitting += OnQuitting;
+            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += OnQuitting;
+#endif
         }
 
         protected abstract void BindInputsAndOutputs(PropertyWrapperComputeStandalone wrapper, ComputeBuffer resultsBuffer);
@@ -561,7 +568,24 @@ namespace Crest
             _resultRegistrar = _resultRegistrarLast = null;
 
             // Late callbacks must not access the disposed CPU results. Keep the GPU source buffers alive until
-            // this instance's outstanding requests finish; no global wait or new work is needed during teardown.
+            // this instance's outstanding requests finish. Normal cleanup does not block the player loop.
+            ProcessCompletedRequests();
+        }
+
+        void OnQuitting()
+        {
+            CleanUp();
+
+            // There will be no later player-loop callback after quitting or an editor domain reload.
+            // Wait only for this provider's requests; callbacks can remove entries from the live list.
+            var requests = _requests.ToArray();
+            foreach (var request in requests)
+            {
+                if (!request._request.done && !request._request.hasError)
+                {
+                    request._request.WaitForCompletion();
+                }
+            }
             ProcessCompletedRequests();
         }
 
@@ -570,6 +594,13 @@ namespace Crest
             _computeBufQueries?.Dispose();
             _computeBufResults?.Dispose();
             _computeBufQueries = _computeBufResults = null;
+
+            // Keep shutdown handlers registered while cleanup still has pending readbacks.
+            Application.quitting -= OnQuitting;
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.quitting -= OnQuitting;
+            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload -= OnQuitting;
+#endif
         }
 
         public int Query(int i_ownerHash, float i_minSpatialLength, Vector3[] i_queryPoints, Vector3[] o_resultDisps, Vector3[] o_resultNorms, Vector3[] o_resultVels)

@@ -21,6 +21,9 @@ static class Program
             ("synchronous success and failure do not leak a reserved slot", SynchronousCompletion),
             ("Update drains a completed request before its callback", Polling),
             ("cleanup is idempotent and late callbacks release only this instance", Cleanup),
+            ("quitting drains pending callbacks and releases the provider exactly once", Quitting),
+            ("quitting also drains providers already awaiting asynchronous cleanup", QuittingAfterCleanup),
+            ("shutdown waits only for its own requests even without callbacks", ShutdownIsolation),
             ("dispatch and readback exceptions roll back the reserved next batch", SubmissionFailure),
             ("persistent compaction moves query positions with registration ranges", PersistentCompaction),
             ("dictionary reuse cannot overwrite another persistent query", ReorderedCompaction),
@@ -57,6 +60,7 @@ static class Program
 
     static void Reset(int capacity = 64)
     {
+        Application.Reset();
         AsyncGPUReadback.Reset();
         ComputeBuffer.All.Clear();
         ComputeShader.DispatchCount = 0;
@@ -250,6 +254,7 @@ static class Program
         query.CleanUp();
         query.CleanUp();
         Check(query.RequestCount == 2, "cleanup forgot outstanding requests");
+        Check(AsyncGPUReadback.Requests.All(request => request.WaitCount == 0), "normal cleanup blocked on the GPU");
         Check(ownedBuffers.All(buffer => !buffer.Disposed), "GPU source released before outstanding readbacks");
         Check(!query.Post(1, Points(55)), "disposed provider accepted a query");
         Check(!query.Result(1, new Vector3[1]), "disposed provider exposed CPU result memory");
@@ -268,6 +273,58 @@ static class Program
         Result(other, 2, 20);
         other.CleanUp();
         Check(ComputeBuffer.All.All(buffer => buffer.DisposeCount == 1), "cleanup affected another provider");
+        NoErrors();
+    }
+
+    static void Quitting()
+    {
+        var query = new TestQuery();
+        Submit(query, 0, 1, 1);
+        Submit(query, 1, 1, 2);
+        Check(Application.HandlerCount == 1, "provider did not register shutdown cleanup");
+        Application.RaiseQuitting();
+        Check(query.RequestCount == 0, "quitting left pending requests");
+        Check(AsyncGPUReadback.Requests.All(request => request.WaitCount == 1 && request.GetDataCount == 0),
+            "quitting did not wait once per request or accessed disposed CPU results");
+        Check(ComputeBuffer.All.All(buffer => buffer.DisposeCount == 1), "quitting leaked or double-disposed GPU buffers");
+        Check(Application.HandlerCount == 0, "disposed provider retained its shutdown handler");
+        Application.RaiseQuitting();
+        query.CleanUp();
+        NoErrors();
+    }
+
+    static void QuittingAfterCleanup()
+    {
+        var query = new TestQuery();
+        Submit(query, 0, 1, 1);
+        query.CleanUp();
+        Check(Application.HandlerCount == 1, "pending cleanup lost its shutdown handler");
+        Check(AsyncGPUReadback.Requests[0].WaitCount == 0, "normal cleanup blocked on a readback");
+        Application.RaiseQuitting();
+        Check(query.RequestCount == 0 && Application.HandlerCount == 0, "quitting lost an already disposed provider");
+        Check(ComputeBuffer.All.All(buffer => buffer.DisposeCount == 1), "pending cleanup leaked GPU buffers at quit");
+        AsyncGPUReadback.Notify(0);
+        NoErrors();
+    }
+
+    static void ShutdownIsolation()
+    {
+        var query = new TestQuery();
+        var ownedBuffers = ComputeBuffer.All.ToArray();
+        Submit(query, 0, 1, 1);
+        var other = new TestQuery();
+        var otherIndex = Submit(other, 1, 2, 20);
+        AsyncGPUReadback.NotifyOnWait = false;
+        Check(Application.HandlerCount == 2, "providers did not register independent shutdown handlers");
+        Application.RaiseFirstQuitting();
+        Check(query.RequestCount == 0 && ownedBuffers.All(buffer => buffer.DisposeCount == 1),
+            "shutdown required a future callback to release its own buffers");
+        Check(!AsyncGPUReadback.Requests[otherIndex].Done && AsyncGPUReadback.Requests[otherIndex].WaitCount == 0,
+            "shutdown waited on a different provider");
+        AsyncGPUReadback.Complete(otherIndex);
+        Result(other, 2, 20);
+        other.CleanUp();
+        Check(Application.HandlerCount == 0, "normal completion retained a shutdown handler");
         NoErrors();
     }
 
@@ -570,6 +627,14 @@ namespace UnityEngine
     }
     public struct Vector3Int { public int x, y, z; }
     public static class Time { public static int frameCount; public static float time; }
+    public static class Application
+    {
+        public static event Action quitting;
+        public static int HandlerCount => quitting?.GetInvocationList().Length ?? 0;
+        public static void Reset() => quitting = null;
+        public static void RaiseQuitting() => quitting?.Invoke();
+        public static void RaiseFirstQuitting() => ((Action)quitting.GetInvocationList()[0])();
+    }
     public static class Debug
     {
         public static readonly List<string> Errors = new List<string>();
@@ -681,7 +746,7 @@ namespace UnityEngine.Rendering
         public ComputeBuffer Source;
         public Vector3[] Data;
         public bool Done, Error;
-        public int GetDataCount;
+        public int GetDataCount, WaitCount;
         public Action<AsyncGPUReadbackRequest> Callback;
     }
     public struct AsyncGPUReadbackRequest
@@ -689,6 +754,13 @@ namespace UnityEngine.Rendering
         internal ReadbackState State;
         public bool done => State.Done;
         public bool hasError => State.Error;
+        public void WaitForCompletion()
+        {
+            if (State.Source.Disposed) throw new Exception("waiting on a disposed GPU source");
+            State.WaitCount++;
+            State.Done = true;
+            if (AsyncGPUReadback.NotifyOnWait) State.Callback(this);
+        }
         public Unity.Collections.NativeArray<T> GetData<T>()
         {
             if (!done || hasError) throw new Exception("invalid readback data accessed");
@@ -700,10 +772,12 @@ namespace UnityEngine.Rendering
     {
         public static readonly List<ReadbackState> Requests = new List<ReadbackState>();
         public static bool CompleteInsideRequest, ErrorInsideRequest, ThrowOnRequest;
+        public static bool NotifyOnWait;
         public static void Reset()
         {
             Requests.Clear();
             CompleteInsideRequest = ErrorInsideRequest = ThrowOnRequest = false;
+            NotifyOnWait = true;
         }
         public static AsyncGPUReadbackRequest Request(ComputeBuffer source, Action<AsyncGPUReadbackRequest> callback)
         {
