@@ -234,6 +234,10 @@ class WaveSpectrum(unittest.TestCase):
         # The bake and both query entry points use unscaled time / saved period.
         for name in ("SampleHeightXZT", "SampleDisplacementXZT"):
             body = function(BAKED, name)
+            if "SampleDisplacementXZTWithInvert(" in body:
+                body += function(BAKED, "SampleDisplacementXZTWithInvert")
+            if "CalculateTemporalSamplingData(" in body:
+                body += function(BAKED, "CalculateTemporalSamplingData")
             self.assertIn("t / parameters._period", body)
         for period in (4, 17, 32, 128):
             for scale in (.125, .5, 1, 1.3, 2.75, 25, -.5, -1.3):

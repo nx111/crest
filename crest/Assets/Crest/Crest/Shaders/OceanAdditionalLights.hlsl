@@ -2,8 +2,20 @@
 #ifndef CREST_OCEAN_ADDITIONAL_LIGHTS_INCLUDED
 #define CREST_OCEAN_ADDITIONAL_LIGHTS_INCLUDED
 
+#if _FOAM_ON && _FOAM3DLIGHTING_ON
+half3 CrestFoamAdditionalLight(half3 normalWS, half3 view, half3 lightDirection, half3 radiance, float normalVariance)
+{
+    half ndl = saturate(dot(normalWS, lightDirection));
+    half3 colour = _FoamWhiteColor.rgb * _WaveFoamLightScale * radiance * ndl;
+    colour += CrestFilteredLightHighlight(dot(reflect(-view, normalWS), lightDirection), _WaveFoamSpecularFallOff, normalVariance)
+        * _WaveFoamSpecularBoost * radiance * ndl;
+    return colour;
+}
+#endif
+
 void CrestAccumulateAdditionalLight(Light light, half3 normalWS, half3 view,
     half3 scatterTint, half sss, bool underwater, float normalVariance,
+    CrestFoamLightingData foamLighting,
     inout half3 scatter, inout half3 specular, inout half3 foam)
 {
 #if defined(_LIGHT_LAYERS)
@@ -21,16 +33,28 @@ void CrestAccumulateAdditionalLight(Light light, half3 normalWS, half3 view,
     specular += CrestFilteredLightHighlight(dot(reflect(-view, normalWS), light.direction), _AdditionalLightFallOff, normalVariance)
         * _AdditionalLightBoost * radiance * ndl;
 #if _FOAM_ON
-    foam += _FoamWhiteColor.rgb * _WaveFoamLightScale * radiance * ndl;
 #if _FOAM3DLIGHTING_ON
-    foam += CrestFilteredLightHighlight(dot(reflect(-view, normalWS), light.direction), _WaveFoamSpecularFallOff, normalVariance)
-        * _WaveFoamSpecularBoost * radiance * ndl;
+    // Reuse each phase's sun normal and derivative variance. All texture samples
+    // and derivatives ran before this light loop; no additional light fetch is needed.
+    if (foamLighting.weights.x > 0.0)
+    {
+        foam += foamLighting.weights.x * CrestFoamAdditionalLight(foamLighting.normal0, view, light.direction, radiance, foamLighting.variance0);
+    }
+#if _FLOW_ON
+    if (foamLighting.weights.y > 0.0)
+    {
+        foam += foamLighting.weights.y * CrestFoamAdditionalLight(foamLighting.normal1, view, light.direction, radiance, foamLighting.variance1);
+    }
+#endif
+#else
+    foam += _FoamWhiteColor.rgb * _WaveFoamLightScale * radiance * ndl;
 #endif
 #endif
 }
 
 void CrestAdditionalLights(float3 positionWS, half3 normalWS, half3 view, float2 screenUV,
     half seaDepth, half sss, bool underwater, float normalVariance,
+    CrestFoamLightingData foamLighting,
     out half3 scatter, out half3 specular, out half3 foam)
 {
     scatter = specular = foam = 0.0h;
@@ -51,14 +75,14 @@ void CrestAdditionalLights(float3 positionWS, half3 normalWS, half3 view, float2
     {
         CLUSTER_LIGHT_LOOP_SUBTRACTIVE_LIGHT_CHECK
         Light light = GetAdditionalLight(lightIndex, positionWS, half4(1, 1, 1, 1));
-        CrestAccumulateAdditionalLight(light, normalWS, view, scatterTint, sss, underwater, normalVariance, scatter, specular, foam);
+        CrestAccumulateAdditionalLight(light, normalWS, view, scatterTint, sss, underwater, normalVariance, foamLighting, scatter, specular, foam);
     }
 #endif
     // Evaluate per pixel even for a per-vertex URP asset: large ocean tiles otherwise lose local highlights.
     uint lightCount = GetAdditionalLightsCount();
     LIGHT_LOOP_BEGIN(lightCount)
         Light light = GetAdditionalLight(lightIndex, positionWS, half4(1, 1, 1, 1));
-        CrestAccumulateAdditionalLight(light, normalWS, view, scatterTint, sss, underwater, normalVariance, scatter, specular, foam);
+        CrestAccumulateAdditionalLight(light, normalWS, view, scatterTint, sss, underwater, normalVariance, foamLighting, scatter, specular, foam);
     LIGHT_LOOP_END
 #endif
 }

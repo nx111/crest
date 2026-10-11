@@ -503,7 +503,7 @@ namespace Crest
             {
                 if (quadIndex >= _queryPointsX.Length) return;
 
-                FFTBakedData.SampleDisplacementXZT(_queryPointsX[quadIndex], _queryPointsZ[quadIndex], _t, _params, in _framesFlattened,
+                FFTBakedData.SampleDisplacementXZTWithInvert(_queryPointsX[quadIndex], _queryPointsZ[quadIndex], _t, _params, in _framesFlattened,
                     out var dispX, out var dispY, out var dispZ);
 
                 _outputX[quadIndex] = dispX;

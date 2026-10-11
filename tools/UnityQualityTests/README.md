@@ -13,12 +13,19 @@ This runner does not automate their mip/roughness sweeps, elevated shallow-water
 scenes, EXR round trips or reflection-resource recovery. Offline compilation and
 numerical results for that batch are recorded in the linked report.
 
-The latest wave-normal, FFT/Gerstner and foam changes require the
+The wave-normal, FFT/Gerstner and foam changes require the
 [wave and foam manual checks](../../docs/URP-WAVES-AND-FOAM-STABILITY.md#6-本地画面与性能验收).
 This runner does not automate long-running Gerstner precision, FFT loop/bake/CPU-query
 comparisons, curved-flow transport, emitter-frequency sweeps, foam LOD/phase coverage
 or temporal foam-highlight evaluation. Re-bake existing FFT collision assets before
 reviewing them against the corrected waves.
+
+The latest detail-normal reorientation, per-phase local foam lighting and baked
+FFT query fixes require the [surface detail and query checks](../../docs/URP-SURFACE-DETAIL-AND-WAVE-QUERIES.md#6-本地画面与性能验收).
+This runner does not automate steep-wave detail orientation, local-light/Flow
+coverage sweeps, baked query coordinate/time boundaries or CPU query profiling.
+The Built-in comparison below now isolates common lighting with flat shading
+normals; it does not validate the new normal model's appearance.
 
 Run it **only in a disposable project copy**. The runner changes scenes, camera
 state, Graphics/Quality pipeline assignments, renderer settings and material
@@ -85,10 +92,14 @@ shader name. It does not replace Crest runtime scripts or scene assets.
 - Optional original Built-in/URP surface comparison on the same geometry,
   frozen simulation time, camera, material keywords, single sun and fixed cubemap.
   Foam, scene refraction, shadows, caustics, albedo and planar reflection are
-  disabled for this comparison. Specular AA is also disabled because the original
-  Built-in shader has no equivalent filter; the material's variance is restored
-  after comparison. This isolates surface shading rather than comparing two
-  complete projects.
+  disabled for this comparison. Specular AA is disabled and
+  `_NormalsStrengthOverall` is zero on both shaders: the original Built-in shader
+  has neither the filter nor the corrected wave/detail normal model. The actual
+  wave geometry is shared, and the comparison isolates common flat-normal lighting.
+  Its mean RGB difference threshold remains **0.015**; the material's variance and
+  normal strength are restored after comparison. This does not establish visual
+  equivalence of the intentionally changed normal models. The revised comparison
+  has not yet been run on a GPU; earlier captures belong to the recorded baseline.
 
 ## Specular AA diagnostic
 

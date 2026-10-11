@@ -572,7 +572,7 @@ Shader "Crest/Ocean"
 				// Normal - geom + normal mapping. Subsurface scattering.
 				float3 dummy = 0.;
 				// Wave and water-level contributions are slopes with Y fixed to one.
-				// Normalise only after combining detail and the overall strength.
+				// Detail is reoriented onto this macro normal after its strength is applied.
 				float3 n_pixel = float3(0.0, 1.0, 0.0);
 				half sss = 0.;
 				#if _FOAM_ON
@@ -640,24 +640,30 @@ Shader "Crest/Ocean"
 				sss = saturate(CREST_SSS_MAXIMUM - CREST_SSS_RANGE * sss);
 #endif
 
-				#if _APPLYNORMALMAPPING_ON
-				#if _FLOW_ON
-				ApplyNormalMapsWithFlow(_NormalsTiledTexture, positionXZWSUndisplaced, input.flow_shadow.xy, lodAlpha, cascadeData0, instanceData, n_pixel);
-				#else
-				n_pixel.xz += SampleNormalMaps(_NormalsTiledTexture, positionXZWSUndisplaced, 0.0, lodAlpha, cascadeData0, instanceData);
-				#endif
-				#endif
-
 				n_pixel.xz += float2(-input.seaLevelDerivs.x, -input.seaLevelDerivs.y);
 
-				// Finalise normal
+				// Finalise the macro normal before orienting local detail. Keeping the
+				// existing slope strength here preserves the no-normal-map path.
 				n_pixel.xz *= _NormalsStrengthOverall;
 				n_pixel = normalize( n_pixel );
+
+				#if _APPLYNORMALMAPPING_ON
+				float3 detailNormal = float3(0.0, 1.0, 0.0);
+				#if _FLOW_ON
+				ApplyNormalMapsWithFlow(_NormalsTiledTexture, positionXZWSUndisplaced, input.flow_shadow.xy, lodAlpha, cascadeData0, instanceData, detailNormal);
+				#else
+				detailNormal.xz = SampleNormalMaps(_NormalsTiledTexture, positionXZWSUndisplaced, 0.0, lodAlpha, cascadeData0, instanceData);
+				#endif
+				detailNormal.xz *= _NormalsStrengthOverall;
+				n_pixel = CrestReorientNormal(n_pixel, detailNormal.xz);
+				#endif
+
 				float normalVariance = CrestSpecularNormalVariance(n_pixel);
 				if (underwater) n_pixel = -n_pixel;
 
 				// Foam - underwater bubbles and whitefoam
 				half3 bubbleCol = (half3)0.;
+				CrestFoamLightingData foamLighting = (CrestFoamLightingData)0;
 				#if _FOAM_ON
 				// Foam can saturate.
 				foam = saturate(foam);
@@ -680,6 +686,7 @@ Shader "Crest/Ocean"
 					lodAlpha,
 					bubbleCol,
 					whiteFoamCol,
+					foamLighting,
 					cascadeData0,
 					cascadeData1
 				);
@@ -700,6 +707,7 @@ Shader "Crest/Ocean"
 					lodAlpha,
 					bubbleCol,
 					whiteFoamCol,
+					foamLighting,
 					cascadeData0,
 					cascadeData1
 				);
@@ -723,7 +731,7 @@ Shader "Crest/Ocean"
 				);
 
 				half3 additionalScatter, additionalSpecular, additionalFoam;
-				CrestAdditionalLights(input.worldPos, n_pixel, view, uvDepth, seaDepth, sss, underwater, normalVariance,
+				CrestAdditionalLights(input.worldPos, n_pixel, view, uvDepth, seaDepth, sss, underwater, normalVariance, foamLighting,
 					additionalScatter, additionalSpecular, additionalFoam);
 				scatterCol += additionalScatter;
 				half3 col = OceanEmission

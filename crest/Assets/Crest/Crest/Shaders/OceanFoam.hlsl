@@ -5,6 +5,18 @@
 #ifndef CREST_OCEAN_FOAM_INCLUDED
 #define CREST_OCEAN_FOAM_INCLUDED
 
+// Retain the normals used for the sun so local lights shade the same foam relief.
+// Flow phases keep separate normals: lighting their average would invent highlights.
+// Defined for every keyword variant, including materials without foam.
+struct CrestFoamLightingData
+{
+	half3 normal0;
+	half3 normal1;
+	float variance0;
+	float variance1;
+	float2 weights;
+};
+
 #if _FOAM_ON
 
 struct FoamWorldXZ
@@ -112,10 +124,12 @@ void ComputeFoam
 	half lodVal,
 	out half3 o_bubbleCol,
 	out half4 o_whiteFoamCol,
+	out CrestFoamLightingData o_foamLighting,
 	in const CascadeParams cascadeData0,
 	in const CascadeParams cascadeData1
 )
 {
+	o_foamLighting = (CrestFoamLightingData)0;
 	FoamWorldXZ worldXZ;
 	worldXZ.displaced0   = i_worldXZ;
 	worldXZ.displaced1   = i_worldXZ;
@@ -164,6 +178,8 @@ void ComputeFoam
 	// Filter the actual foam normal, which includes its texture relief. This code
 	// runs before light-dependent branches and uses the existing specular AA controls.
 	float foamNormalVariance = CrestSpecularNormalVariance(fN);
+	o_foamLighting.normal0 = fN;
+	o_foamLighting.variance0 = foamNormalVariance;
 	// Do simple NdL and filtered Phong lighting. Match the local-light hemisphere
 	// gate so light behind the foam surface cannot produce a front-side highlight.
 	half foamNdL = saturate(dot(fN, i_lightDir));
@@ -176,6 +192,7 @@ void ComputeFoam
 #endif // _FOAM3DLIGHTING_ON
 
 	o_whiteFoamCol.a = _FoamWhiteColor.a * whiteFoam;
+	o_foamLighting.weights = float2(o_whiteFoamCol.a > 0.0 ? 1.0 : 0.0, 0.0);
 }
 
 half4 CrestBlendWhiteFoam(half4 first, half4 second, float firstWeight)
@@ -205,6 +222,7 @@ void ComputeFoamWithFlow
 	half lodVal,
 	out half3 o_bubbleCol,
 	out half4 o_whiteFoamCol,
+	out CrestFoamLightingData o_foamLighting,
 	in const CascadeParams cascadeData0,
 	in const CascadeParams cascadeData1
 )
@@ -224,11 +242,22 @@ void ComputeFoamWithFlow
 	half4 o_whiteFoamCol1 = half4(0, 0, 0, 0);
 	half3 o_bubbleCol2 = half3(0, 0, 0);
 	half4 o_whiteFoamCol2 = half4(0, 0, 0, 0);
+	CrestFoamLightingData foamLighting1, foamLighting2;
 
-	ComputeFoam(i_texture, i_foam, i_worldXZ, i_worldXZUndisplaced, flow * sample1_offset, i_n, i_pixelZ, i_sceneZ, i_view, i_lightDir, i_shadow, lodVal, o_bubbleCol1, o_whiteFoamCol1, cascadeData0, cascadeData1);
-	ComputeFoam(i_texture, i_foam, i_worldXZ, i_worldXZUndisplaced, flow * sample2_offset, i_n, i_pixelZ, i_sceneZ, i_view, i_lightDir, i_shadow, lodVal, o_bubbleCol2, o_whiteFoamCol2, cascadeData0, cascadeData1);
+	ComputeFoam(i_texture, i_foam, i_worldXZ, i_worldXZUndisplaced, flow * sample1_offset, i_n, i_pixelZ, i_sceneZ, i_view, i_lightDir, i_shadow, lodVal, o_bubbleCol1, o_whiteFoamCol1, foamLighting1, cascadeData0, cascadeData1);
+	ComputeFoam(i_texture, i_foam, i_worldXZ, i_worldXZUndisplaced, flow * sample2_offset, i_n, i_pixelZ, i_sceneZ, i_view, i_lightDir, i_shadow, lodVal, o_bubbleCol2, o_whiteFoamCol2, foamLighting2, cascadeData0, cascadeData1);
 	o_bubbleCol = (sample1_weight * o_bubbleCol1) + (sample2_weight * o_bubbleCol2);
 	o_whiteFoamCol = CrestBlendWhiteFoam(o_whiteFoamCol1, o_whiteFoamCol2, sample1_weight);
+
+	o_foamLighting.normal0 = foamLighting1.normal0;
+	o_foamLighting.normal1 = foamLighting2.normal0;
+	o_foamLighting.variance0 = foamLighting1.variance0;
+	o_foamLighting.variance1 = foamLighting2.variance0;
+	// Match the covered-radiance blend above, using the unrounded float coverage
+	// sum so tiny or empty phases cannot lend another phase a local-light highlight.
+	float2 coverageWeights = float2(sample1_weight * o_whiteFoamCol1.a, sample2_weight * o_whiteFoamCol2.a);
+	float coverage = coverageWeights.x + coverageWeights.y;
+	o_foamLighting.weights = coverageWeights / max(coverage, 0.00000001);
 }
 
 #endif // _FOAM_ON

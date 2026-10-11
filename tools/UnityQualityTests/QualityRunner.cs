@@ -585,10 +585,13 @@ public static class QualityRunner
         var waterShader = _water.shader;
         var waterKeywords = _water.shaderKeywords;
         var specularAAVariance = _water.GetFloat("_SpecularAAVariance");
+        var normalStrengthOverall = _water.GetFloat("_NormalsStrengthOverall");
         try
         {
-            // The original Built-in shader has no specular AA. Compare equivalent shading options.
+            // Isolate the shared lighting equations. The original Built-in shader
+            // has neither specular AA nor the corrected wave/detail normal model.
             _water.SetFloat("_SpecularAAVariance", 0);
+            _water.SetFloat("_NormalsStrengthOverall", 0);
             foreach (var unused in Wait(20)) yield return unused;
             var urp = Capture("reference-urp-surface");
             _water.shader = referenceShader;
@@ -600,10 +603,12 @@ public static class QualityRunner
             foreach (var unused in Wait(10)) yield return unused;
             Check(!_water.IsKeywordEnabled("_FOAM_ON") && !_water.IsKeywordEnabled("_TRANSPARENCY_ON"),
                 "Built-in reference uses the same foam/refraction settings");
+            Check(_water.GetFloat("_NormalsStrengthOverall") == 0,
+                "Built-in reference uses the same flat shading normal");
             var builtin = Capture("reference-builtin-surface");
             var delta = Difference(urp, builtin);
-            Results.Add("Controlled original Built-in / URP surface mean RGB delta: " + delta);
-            Check(delta < 0.015, "Original Built-in and URP surface shading agree in the controlled single-sun case");
+            Results.Add("Controlled original Built-in / URP flat-normal surface mean RGB delta: " + delta);
+            Check(delta < 0.015, "Original Built-in and URP lighting agree in the controlled flat-normal single-sun case");
         }
         finally
         {
@@ -612,6 +617,7 @@ public static class QualityRunner
             _water.shader = waterShader;
             _water.shaderKeywords = waterKeywords;
             _water.SetFloat("_SpecularAAVariance", specularAAVariance);
+            _water.SetFloat("_NormalsStrengthOverall", normalStrengthOverall);
         }
     }
 }

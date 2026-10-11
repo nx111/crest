@@ -68,8 +68,17 @@ def main():
         "foam-flat-flow": ["_FOAM_ON", "_TRANSPARENCY_ON", "_UNDERWATER_ON", "_FLOW_ON", "CREST_FLOATING_ORIGIN"] + shadows,
         "foam-3d-no-normal-map": [feature for feature in features if feature != "_APPLYNORMALMAPPING_ON"] + shadows,
         "local-lights": features + shadows + local,
+        # Foam normals/coverage travel through the light loop even when related
+        # material features are disabled. Exercise each conditional interface.
+        "local-no-foam": [feature for feature in features if feature != "_FOAM_ON"] + shadows + local,
+        "local-foam-flat": [feature for feature in features if feature != "_FOAM3DLIGHTING_ON"] + shadows + local,
+        "local-foam-flat-flow": [feature for feature in features if feature != "_FOAM3DLIGHTING_ON"] + shadows + local + ["_FLOW_ON"],
+        "local-foam-flow": features + shadows + local + ["_FLOW_ON", "CREST_FLOATING_ORIGIN"],
+        "local-foam-no-normal-map": [feature for feature in features if feature != "_APPLYNORMALMAPPING_ON"] + shadows + local,
         "vertex-lights": features + shadows + ["_ADDITIONAL_LIGHTS_VERTEX"],
+        "vertex-foam-flow": features + shadows + ["_ADDITIONAL_LIGHTS_VERTEX", "_FLOW_ON"],
         "clustered-probes": features + shadows + local + ["_CLUSTER_LIGHT_LOOP", "_REFLECTION_PROBE_ATLAS", "_REFLECTION_PROBE_BLENDING", "_REFLECTION_PROBE_BOX_PROJECTION"],
+        "clustered-foam-flow": features + shadows + local + ["_CLUSTER_LIGHT_LOOP", "_REFLECTION_PROBE_ATLAS", "_REFLECTION_PROBE_BLENDING", "_REFLECTION_PROBE_BOX_PROJECTION", "_FLOW_ON"],
         "screen-shadows": features + ["_MAIN_LIGHT_SHADOWS_SCREEN", "_SHADOWS_SOFT_MEDIUM"],
         "reflection-overrides": features + shadows + ["_PLANARREFLECTIONS_ON", "_OVERRIDEREFLECTIONCUBEMAP_ON"],
         "planar-probes": features + shadows + ["_PLANARREFLECTIONS_ON"],

@@ -7,6 +7,20 @@
 
 #if _APPLYNORMALMAPPING_ON
 
+float3 CrestReorientNormal(in const float3 i_baseNormalWS, in const float2 i_detailXZ)
+{
+	// Rotate the effective flat-water detail normal (detail.x, 1, detail.y)
+	// from world up onto the normalised wave/water-level normal. This is RNM
+	// with Y as the reference axis: https://blog.selfshadow.com/publications/blending-in-detail/
+	// Keeping the existing detail XZ definition preserves the flat-water strength.
+	// The upward macro normal makes t.y >= 1, so no antiparallel singularity occurs.
+	const float3 t = i_baseNormalWS + float3(0.0, 1.0, 0.0);
+	const float3 u = float3(-i_detailXZ.x, 1.0, -i_detailXZ.y);
+	// Division by t.y cancels in the final normalisation. The result stays in
+	// the macro normal's hemisphere even when an individual ripple has Y < 0.
+	return normalize(t * dot(t, u) - u * t.y);
+}
+
 half2 SampleNormalMaps
 (
 	in const WaveHarmonic::Crest::TiledTexture i_texture,
@@ -56,7 +70,8 @@ half2 SampleNormalMaps
 			nblend);
 	}
 
-	// approximate combine of normals. would be better if normals applied in local frame.
+	// Preserve the existing effective flat-water perturbation. The caller blends
+	// the flow phases before reorienting this detail onto the macro normal.
 	return _NormalsStrength * norm;
 }
 

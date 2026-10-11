@@ -23,8 +23,10 @@ using System;
 using System.Runtime.CompilerServices;
 using Unity.Collections;
 using Unity.Mathematics;
-using UnityEditor;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace Crest
 {
@@ -175,10 +177,27 @@ namespace Crest
 
             lerpData._alphaU = uTexels % 1f;
             lerpData._alphaV = vTexels % 1f;
-            lerpData._U0 = (int4)uTexels;
-            lerpData._V0 = (int4)vTexels;
+            // Adding the resolution to a tiny negative texel coordinate can
+            // round to the resolution itself. Wrap the integer endpoint too.
+            lerpData._U0 = (int4)uTexels % parameters._textureResolution;
+            lerpData._V0 = (int4)vTexels % parameters._textureResolution;
             lerpData._U1 = (lerpData._U0 + 1) % parameters._textureResolution;
             lerpData._V1 = (lerpData._V0 + 1) % parameters._textureResolution;
+        }
+
+        /// <summary>
+        /// Computes wrapped frame indices and their interpolation weight.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static void CalculateTemporalSamplingData(float4 t, in FFTBakedDataParameters parameters, out int4 frame0, out int4 frame1, out float4 alphaT)
+        {
+            var frame = math.frac(t / parameters._period) * parameters._frameCount;
+            var frameFloor = math.floor(frame);
+            // A tiny negative time can round frac to 1 in float arithmetic.
+            // Wrap that endpoint too, but derive the weight before wrapping.
+            frame0 = (int4)frameFloor % parameters._frameCount;
+            frame1 = (frame0 + 1) % parameters._frameCount;
+            alphaT = frame - frameFloor;
         }
 
         /// <summary>
@@ -188,42 +207,31 @@ namespace Crest
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static float4 SampleHeightXZT(float4 x, float4 z, float4 t, FFTBakedDataParameters parameters, in NativeArray<half> framesFlattened)
         {
-            // Temporal lerp
-            var t01 = t / parameters._period;
-
-            t01 = math.select(1f - (math.abs(t01) % 1f), t01 % 1f, t01 >= 0f);
-            var f0 = (int4)(t01 * parameters._frameCount);
-            var f1 = (f0 + 1) % parameters._frameCount;
-            var alphaT = t01 * parameters._frameCount - f0;
-
-            // Compute height at each time and interpolate
-            var dispY0 = SampleHeightXZWithInvert(x, z, f0, parameters, in framesFlattened);
-            var dispY1 = SampleHeightXZWithInvert(x, z, f1, parameters, in framesFlattened);
-
-            return math.lerp(dispY0, dispY1, alphaT);
+            SampleDisplacementXZTWithInvert(x, z, t, parameters, in framesFlattened, out _, out var height, out _);
+            return height;
         }
 
         /// <summary>
-        /// Takes a position x & z and a frame index and evaluates the water height relative to sea level. It does an iteration
-        /// to invert the displacement to get the correct height at this position.
+        /// Evaluates the displacement of the surface point which moves to the supplied world x & z.
+        /// The fixed point iteration operates on the temporally interpolated displacement field.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        static float4 SampleHeightXZWithInvert(float4 x, float4 z, int4 frameIndex, FFTBakedDataParameters parameters, in NativeArray<half> framesFlattened)
+        public static void SampleDisplacementXZTWithInvert(float4 x, float4 z, float4 t, FFTBakedDataParameters parameters, in NativeArray<half> framesFlattened, out float4 dispX, out float4 dispY, out float4 dispZ)
         {
+            CalculateTemporalSamplingData(t, in parameters, out var frame0, out var frame1, out var alphaT);
             float4 displacedX = x;
             float4 displacedZ = z;
 
-            // Fixed point iteration to search for the undisplaced position
+            // Invert this time's field, not each frame separately: interpolation
+            // and displacement inversion do not commute for choppy waves.
             for (int i = 0; i < kIterationCount; i++)
             {
-                SampleDisplacementFromXZ(x, z, frameIndex, parameters, framesFlattened, out var dispX, out _, out var dispZ);
-                x = displacedX - dispX;
-                z = displacedZ - dispZ;
+                SampleDisplacementInterpolated(x, z, frame0, frame1, alphaT, parameters, in framesFlattened, out var offsetX, out _, out var offsetZ);
+                x = displacedX - offsetX;
+                z = displacedZ - offsetZ;
             }
 
-            SampleDisplacementFromXZ(x, z, frameIndex, parameters, framesFlattened, out _, out var dispY, out _);
-
-            return dispY;
+            SampleDisplacementInterpolated(x, z, frame0, frame1, alphaT, parameters, in framesFlattened, out dispX, out dispY, out dispZ);
         }
 
         /// <summary>
@@ -275,6 +283,17 @@ namespace Crest
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static void SampleDisplacementInterpolated(float4 x, float4 z, int4 frame0, int4 frame1, float4 alphaT, FFTBakedDataParameters parameters, in NativeArray<half> framesFlattened, out float4 dispX, out float4 dispY, out float4 dispZ)
+        {
+            SampleDisplacementFromXZ(x, z, frame0, parameters, in framesFlattened, out var dispX0, out var dispY0, out var dispZ0);
+            SampleDisplacementFromXZ(x, z, frame1, parameters, in framesFlattened, out var dispX1, out var dispY1, out var dispZ1);
+
+            dispX = math.lerp(dispX0, dispX1, alphaT);
+            dispY = math.lerp(dispY0, dispY1, alphaT);
+            dispZ = math.lerp(dispZ0, dispZ1, alphaT);
+        }
+
         /// <summary>
         /// Takes a position x & z and a time t and evaluates the water displacement relative to sea level. This does not
         /// invert the displacements - it assumes the input position is the undisplaced position.
@@ -282,21 +301,8 @@ namespace Crest
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void SampleDisplacementXZT(float4 x, float4 z, float4 t, FFTBakedDataParameters parameters, in NativeArray<half> framesFlattened, out float4 dispX, out float4 dispY, out float4 dispZ)
         {
-            // Temporal lerp
-            var t01 = t / parameters._period;
-
-            t01 = math.select(1f - (math.abs(t01) % 1f), t01 % 1f, t01 >= 0f);
-            var f0 = (int4)(t01 * parameters._frameCount);
-            var f1 = (f0 + 1) % parameters._frameCount;
-            var alphaT = t01 * parameters._frameCount - f0;
-
-            // Compute height at each time and interpolate
-            SampleDisplacementFromXZ(x, z, f0, parameters, in framesFlattened, out var dispX0, out var dispY0, out var dispZ0);
-            SampleDisplacementFromXZ(x, z, f1, parameters, in framesFlattened, out var dispX1, out var dispY1, out var dispZ1);
-
-            dispX = math.lerp(dispX0, dispX1, alphaT);
-            dispY = math.lerp(dispY0, dispY1, alphaT);
-            dispZ = math.lerp(dispZ0, dispZ1, alphaT);
+            CalculateTemporalSamplingData(t, in parameters, out var frame0, out var frame1, out var alphaT);
+            SampleDisplacementInterpolated(x, z, frame0, frame1, alphaT, parameters, in framesFlattened, out dispX, out dispY, out dispZ);
         }
 
         /// <summary>

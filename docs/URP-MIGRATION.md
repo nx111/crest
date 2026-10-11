@@ -10,13 +10,16 @@ It does not include the commercial Crest URP package.
 - **Latest changes after `2aaeec77`** add specular filtering, stable foam integration/sampling,
   corrected water-path attenuation and caustics, followed by planar reflection filtering,
   explicit normal gradients, precise shallow-water caches and corrected underwater Fresnel blending.
-  The latest batch corrects geometric wave normals, FFT loop spectrum/timing, Gerstner phase
-  precision, FFT baking and foam transport/input/compositing.
+  Later batches correct geometric wave normals, FFT loop spectrum/timing, Gerstner phase
+  precision, FFT baking and foam transport/input/compositing. The latest batch reorients
+  detail normals, gives local lights each foam Flow phase's normal/variance, and fixes
+  baked FFT query coordinates, temporal interpolation and index boundaries.
   Their validation is offline HLSL compilation,
   C# syntax and numerical checks; **Unity/GPU validation has not been rerun for these changes**.
   See [URP-REALISM-IMPROVEMENTS.md](URP-REALISM-IMPROVEMENTS.md), the
-  [reflection and shallow-water report](URP-REFLECTIONS-AND-SHALLOW-WATER.md), and the latest
-  [wave and foam stability report](URP-WAVES-AND-FOAM-STABILITY.md) for results, controls and limits.
+  [reflection and shallow-water report](URP-REFLECTIONS-AND-SHALLOW-WATER.md), the
+  [wave and foam stability report](URP-WAVES-AND-FOAM-STABILITY.md), and the latest
+  [surface detail and wave query report](URP-SURFACE-DETAIL-AND-WAVE-QUERIES.md) for results, controls and limits.
 - Renderer: **Universal Renderer with Render Graph enabled**, initially Forward,
   Linear color, MSAA off, render scale 1.0. The 2D Renderer is not supported.
 - **Headless Unity import, C# API binding, pipeline creation, example asset conversion
@@ -62,8 +65,9 @@ a separate local compatibility test, not a tested configuration of this branch.
 
 The FFT/Gerstner generation and wave-query/buoyancy architecture is retained. Later
 changes correct wave phase precision, FFT loop spectrum/timing, geometric normals and
-FFT readback; foam uses exact source/decay integration, midpoint flow backtracing,
-time-normalized built-in additive inputs and filtered coverage/color sampling.
+FFT readback and baked query coordinates/interpolation; foam uses exact source/decay
+integration, midpoint flow backtracing, time-normalized built-in additive inputs and
+filtered coverage/color sampling.
 Surface optics and shading changes are detailed in the reports above. The
 offscreen simulation input shaders that use UnityCG remain explicit draw shaders;
 they do not require the built-in camera lighting or GrabPass pipeline.
@@ -107,6 +111,10 @@ they do not require the built-in camera lighting or GrabPass pipeline.
    and Time Scale handling must match both the displayed waves and baked CPU queries.
    Built-in additive foam inputs retain their default 30 Hz deposit; review wake
    strengths previously tuned at other simulation frequencies.
+9. Review detail-normal strength on steep waves and local lights on 3D foam. Baked FFT
+   provider displacement queries now invert the field at the query time; their spatial
+   field sampling calls increase from two to eight. Common `SampleHeightHelper` calls
+   also use this path. Profile the actual query workload on the target CPU.
 
 ## 本地复核清单
 
@@ -114,10 +122,11 @@ they do not require the built-in camera lighting or GrabPass pipeline.
 该轮静态／数值回归与 37 帧 GPU 检查均通过，包含透明折射、局部光源、盒投影及
 两种全屏水下路径。详细范围、对照图和仍待验收的差距见
 [渲染质量复核报告](URP-QUALITY-AUDIT.md)；自动检查的复现步骤见
-[UnityQualityTests](../tools/UnityQualityTests/README.md)。之后三批渲染质量修改
+[UnityQualityTests](../tools/UnityQualityTests/README.md)。之后四批渲染质量修改
 尚未重跑 GPU 检查，优先复核[高光、泡沫与光学项目](URP-REALISM-IMPROVEMENTS.md#5-本地画面验收与后续优先级)
 、[反射、法线与浅水项目](URP-REFLECTIONS-AND-SHALLOW-WATER.md#6-本地画面与性能验收)
-及[波浪时序、浪面法线与泡沫项目](URP-WAVES-AND-FOAM-STABILITY.md#6-本地画面与性能验收)。
+、[波浪时序、浪面法线与泡沫项目](URP-WAVES-AND-FOAM-STABILITY.md#6-本地画面与性能验收)
+及[细节法线、泡沫局部灯与烘焙查询项目](URP-SURFACE-DETAIL-AND-WAVE-QUERIES.md#6-本地画面与性能验收)。
 以下仍是完整人工验收项：
 
 - [ ] **焦散位置**：浅水池底放置可辨识物体，分别从水上和水下观察；转动、平移相机，
