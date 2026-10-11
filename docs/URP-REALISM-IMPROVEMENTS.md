@@ -4,6 +4,10 @@
 [`2aaeec77`](https://github.com/nx111/crest/commit/2aaeec77441f6a616baada1a38e72f02e54d07a5)。
 目标版本保持 **Unity 6000.6.2f1 / URP 17.6.0**。
 
+后续已继续实施[反射过滤、法线采样与浅水精度改进](URP-REFLECTIONS-AND-SHALLOW-WATER.md)。
+该报告记录第二批实现、173 个离线编译用例及累计 63 项回归结果；本文保留第一批的范围
+和当时验证记录，文末关于平面反射过滤与缓存精度的后续项已有部分完成。
+
 本轮已实施高光抗闪烁、泡沫时间积分与远场采样、折射光程和焦散修正。
 当前结果来自源码审查、实际 HLSL 的离线编译和数值验证；**本轮没有运行 Unity Editor、
 GPU 截图比较或 Android 真机测试**。之前的 D3D11 截图和 Built-in 对照属于

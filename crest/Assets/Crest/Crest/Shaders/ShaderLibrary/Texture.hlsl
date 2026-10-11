@@ -61,6 +61,19 @@ namespace WaveHarmonic
 				return SAMPLE_TEXTURE2D_LOD(_texture, _sampler, uv, lod);
 			}
 
+			half4 SampleGrad(float2 uv, float2 gradientX, float2 gradientY)
+#ifdef SHADER_API_PSSL
+	const
+#endif
+			{
+#if defined(SAMPLE_TEXTURE2D_GRAD)
+				return SAMPLE_TEXTURE2D_GRAD(_texture, _sampler, uv, gradientX, gradientY);
+#else
+				// The retained Built-in helpers do not define the SRP gradient macro.
+				return _texture.SampleGrad(_sampler, uv, gradientX, gradientY);
+#endif
+			}
+
 #if CREST_FLOATING_ORIGIN
 			float2 FloatingOriginOffset()
 #ifdef SHADER_API_PSSL

@@ -31,10 +31,16 @@ half2 SampleNormalMaps
 	worldXZUndisplaced -= offset;
 
 	float nstretch = i_texture._scale * cascadeData._scale / 100.0; // normals scaled with geometry
+	// Include spatially varying flow in the footprint before entering the LOD blend
+	// branch. Implicit derivatives in that branch can be undefined across a pixel quad.
+	// Scroll offsets are uniform within a draw, so both scroll directions share these gradients.
+	const float2 normalUV = worldXZUndisplaced / nstretch;
+	const float2 normalUVdx = ddx(normalUV);
+	const float2 normalUVdy = ddy(normalUV);
 	const float spdmulL = normalScrollSpeeds[0];
 	half2 norm =
-		UnpackNormal(i_texture.Sample((v0 * _CrestTime * spdmulL + worldXZUndisplaced) / nstretch)).xy +
-		UnpackNormal(i_texture.Sample((v1 * _CrestTime * spdmulL + worldXZUndisplaced) / nstretch)).xy;
+		UnpackNormal(i_texture.SampleGrad((v0 * _CrestTime * spdmulL + worldXZUndisplaced) / nstretch, normalUVdx, normalUVdy)).xy +
+		UnpackNormal(i_texture.SampleGrad((v1 * _CrestTime * spdmulL + worldXZUndisplaced) / nstretch, normalUVdx, normalUVdy)).xy;
 
 	// blend in next higher scale of normals to obtain continuity
 	const float farNormalsWeight = instanceData._farNormalsWeight;
@@ -45,8 +51,8 @@ half2 SampleNormalMaps
 		nstretch *= 2.;
 		const float spdmulH = normalScrollSpeeds[1];
 		norm = lerp(norm,
-			UnpackNormal(i_texture.Sample((v0 * _CrestTime * spdmulH + worldXZUndisplaced) / nstretch)).xy +
-			UnpackNormal(i_texture.Sample((v1 * _CrestTime * spdmulH + worldXZUndisplaced) / nstretch)).xy,
+			UnpackNormal(i_texture.SampleGrad((v0 * _CrestTime * spdmulH + worldXZUndisplaced) / nstretch, normalUVdx * 0.5, normalUVdy * 0.5)).xy +
+			UnpackNormal(i_texture.SampleGrad((v1 * _CrestTime * spdmulH + worldXZUndisplaced) / nstretch, normalUVdx * 0.5, normalUVdy * 0.5)).xy,
 			nblend);
 	}
 

@@ -60,7 +60,7 @@ Shader "Crest/Inputs/Animated Waves/Set Water Height Using Geometry"
 			half4 Frag(Varyings input) : SV_Target
 			{
 				float3 uv = WorldToUV(input.worldPos.xz, _CrestCascadeData[_LD_SliceIndex], _LD_SliceIndex);
-				half seaLevelOffset = _LD_TexArray_SeaFloorDepth.SampleLevel(LODData_linear_clamp_sampler, uv, 0.0).y;
+				float seaLevelOffset = _LD_TexArray_SeaFloorDepth.SampleLevel(LODData_linear_clamp_sampler, uv, 0.0).y;
 
 				// Write displacement to get from sea level of ocean to the y value of this geometry
 				float height = input.worldPos.y - _OceanCenterPosWorld.y - seaLevelOffset;

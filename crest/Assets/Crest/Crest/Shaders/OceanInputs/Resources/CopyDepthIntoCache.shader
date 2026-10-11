@@ -30,7 +30,6 @@ Shader "Crest/Copy Depth Buffer Into Cache"
 
 			CBUFFER_START(CrestPerOceanInput)
 			float4 _HeightNearHeightFar;
-			float4 _CustomZBufferParams;
 			CBUFFER_END
 
 			Texture2D _CamDepthBuffer;
@@ -57,25 +56,20 @@ Shader "Crest/Copy Depth Buffer Into Cache"
 				return output;
 			}
 
-			float CustomLinear01Depth(float z)
+			float CrestCacheDepthToHeight(float deviceDepth)
 			{
-				z *= _CustomZBufferParams.x;
-				return (1.0 - z) / _CustomZBufferParams.y;
+				// The capture camera is orthographic: device depth already spans
+				// the near/far interval linearly, including on OpenGL/GLES.
+#if UNITY_REVERSED_Z
+				deviceDepth = 1.0 - deviceDepth;
+#endif
+				return lerp(_HeightNearHeightFar.x, _HeightNearHeightFar.y, deviceDepth) - _HeightOffset;
 			}
 
 			float4 frag(Varyings input) : SV_Target
 			{
 				float deviceDepth = _CamDepthBuffer.Sample(sampler_CamDepthBuffer, input.uv).x;
-				float linear01Z = CustomLinear01Depth(deviceDepth);
-
-				float altitude;
-#if UNITY_REVERSED_Z
-				altitude = lerp(_HeightNearHeightFar.y, _HeightNearHeightFar.x, linear01Z);
-#else
-				altitude = lerp(_HeightNearHeightFar.x, _HeightNearHeightFar.y, linear01Z);
-#endif
-
-				return float4(altitude - _HeightOffset, 0.0, 0.0, 1.0);
+				return float4(CrestCacheDepthToHeight(deviceDepth), 0.0, 0.0, 1.0);
 			}
 
 			ENDCG

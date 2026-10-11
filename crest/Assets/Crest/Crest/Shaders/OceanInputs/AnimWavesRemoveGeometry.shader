@@ -59,7 +59,7 @@ Shader "Crest/Inputs/Animated Waves/Push Water Under Convex Hull"
 				// Write large XZ components - using min blending so this should not affect them.
 
 				float3 uv = WorldToUV(input.worldPos.xz, _CrestCascadeData[_LD_SliceIndex], _LD_SliceIndex);
-				half seaLevelOffset = _LD_TexArray_SeaFloorDepth.SampleLevel(LODData_linear_clamp_sampler, uv, 0.0).y;
+				float seaLevelOffset = _LD_TexArray_SeaFloorDepth.SampleLevel(LODData_linear_clamp_sampler, uv, 0.0).y;
 
 				return half4(10000.0, _Weight * (input.worldPos.y - _OceanCenterPosWorld.y - seaLevelOffset), 10000.0, 1.0);
 			}

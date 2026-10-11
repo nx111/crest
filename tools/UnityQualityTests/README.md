@@ -7,6 +7,12 @@ in [URP-QUALITY-AUDIT.md](../../docs/URP-QUALITY-AUDIT.md). Those results predat
 the specular AA diagnostic and the subsequent water quality changes; rerun this
 tool on the current revision to validate those changes.
 
+The latest planar reflection, normal sampling, depth-cache and underwater Fresnel
+changes also need the [additional manual visual/performance checks](../../docs/URP-REFLECTIONS-AND-SHALLOW-WATER.md#6-本地画面与性能验收).
+This runner does not automate their mip/roughness sweeps, elevated shallow-water
+scenes, EXR round trips or reflection-resource recovery. Offline compilation and
+numerical results for that batch are recorded in the linked report.
+
 Run it **only in a disposable project copy**. The runner changes scenes, camera
 state, Graphics/Quality pipeline assignments, renderer settings and material
 properties, then exits Unity. It is a rendering diagnostic, not an interactive

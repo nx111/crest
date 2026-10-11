@@ -108,6 +108,8 @@ namespace Crest
         public static class ShaderIDs
         {
             public static readonly int s_CamDepthBuffer = Shader.PropertyToID("_CamDepthBuffer");
+            // Kept for compatibility with scripts referencing this ID. Orthographic
+            // depth capture no longer requires perspective Z-buffer parameters.
             public static readonly int s_CustomZBufferParams = Shader.PropertyToID("_CustomZBufferParams");
             public static readonly int s_HeightNearHeightFar = Shader.PropertyToID("_HeightNearHeightFar");
         }
@@ -148,8 +150,31 @@ namespace Crest
 
         void OnDestroy()
         {
-            if (_camDepthCache != null) Helpers.Destroy(_camDepthCache.gameObject);
-            if (_drawCacheQuad != null) Helpers.Destroy(_drawCacheQuad);
+            if (_camDepthCache != null)
+            {
+                var target = _camDepthCache.targetTexture;
+                _camDepthCache.targetTexture = null;
+                ReleaseRenderTexture(target);
+                Helpers.Destroy(_camDepthCache.gameObject);
+            }
+
+            ReleaseRenderTexture(_cacheTexture);
+            _cacheTexture = null;
+            Helpers.Destroy(_copyDepthMaterial);
+            _copyDepthMaterial = null;
+
+            if (_drawCacheQuad != null)
+            {
+                Helpers.Destroy(_drawCacheQuad.GetComponent<Renderer>().sharedMaterial);
+                Helpers.Destroy(_drawCacheQuad);
+            }
+        }
+
+        static void ReleaseRenderTexture(RenderTexture texture)
+        {
+            if (texture == null) return;
+            texture.Release();
+            Helpers.Destroy(texture);
         }
 
 #if UNITY_EDITOR
@@ -204,6 +229,10 @@ namespace Crest
             result.format = fmt;
             result.useMipMap = false;
             result.anisoLevel = 0;
+            // Height data is not periodic. Repeating across the cache edge blends
+            // unrelated terrain from opposite sides into a false shoreline.
+            result.wrapMode = TextureWrapMode.Clamp;
+            result.filterMode = depthStencilTarget ? FilterMode.Point : FilterMode.Bilinear;
             return result;
         }
 
@@ -212,7 +241,7 @@ namespace Crest
             if (updateComponents && IsCacheTextureOutdated(_cacheTexture))
             {
                 // Destroy the texture so it can be recreated.
-                _cacheTexture.Release();
+                ReleaseRenderTexture(_cacheTexture);
                 _cacheTexture = null;
             }
 
@@ -260,8 +289,9 @@ namespace Crest
             if (updateComponents && IsCacheTextureOutdated(_camDepthCache.targetTexture))
             {
                 // Destroy the texture so it can be recreated.
-                _camDepthCache.targetTexture.Release();
+                var target = _camDepthCache.targetTexture;
                 _camDepthCache.targetTexture = null;
+                ReleaseRenderTexture(target);
             }
 
             if (_camDepthCache.targetTexture == null)
@@ -281,6 +311,9 @@ namespace Crest
             if (_drawCacheQuad == null)
             {
                 _drawCacheQuad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                // Configure the input before OnEnable, which would otherwise
+                // create a geometry-depth material that is immediately replaced.
+                _drawCacheQuad.SetActive(false);
                 _drawCacheQuad.hideFlags = HideFlags.DontSave;
                 Helpers.Destroy(_drawCacheQuad.GetComponent<Collider>());
                 _drawCacheQuad.name = "DepthCache_" + gameObject.name + "_NOSAVE";
@@ -291,12 +324,12 @@ namespace Crest
                 sfdi._relative = _relative;
                 qr = _drawCacheQuad.GetComponent<Renderer>();
                 qr.sharedMaterial = new Material(Shader.Find(LodDataMgrSeaFloorDepth.ShaderName));
+                _drawCacheQuad.SetActive(isActiveAndEnabled);
             }
             else
             {
                 qr = _drawCacheQuad.GetComponent<Renderer>();
-                var sfdi = _drawCacheQuad.GetComponent<RegisterSeaFloorDepthInput>();
-                sfdi._relative = _relative;
+                UpdateCacheQuadRelativeHeight();
             }
 
             if (_type == OceanDepthCacheType.Baked)
@@ -309,6 +342,14 @@ namespace Crest
             }
 
             qr.enabled = false;
+        }
+
+        internal void UpdateCacheQuadRelativeHeight()
+        {
+            if (_drawCacheQuad != null)
+            {
+                _drawCacheQuad.GetComponent<RegisterSeaFloorDepthInput>()._relative = _relative;
+            }
         }
 
         /// <summary>
@@ -328,19 +369,19 @@ namespace Crest
             PopulateCacheInternal(updateComponents);
         }
 
-        internal void PopulateCacheInternal(bool updateComponents = false)
+        internal bool PopulateCacheInternal(bool updateComponents = false)
         {
             if (OceanRenderer.RunningWithoutGPU)
             {
                 // Don't bake in headless mode
                 Debug.LogWarning("Crest: Depth cache will not be populated at runtime when in batched/headless mode. Please pre-bake the cache in the Editor.");
-                return;
+                return false;
             }
 
             // Make sure we have required objects.
             if (!InitObjects(updateComponents))
             {
-                return;
+                return false;
             }
 
             var oldShadowDistance = 0f;
@@ -392,20 +433,28 @@ namespace Crest
 
             _copyDepthMaterial.SetTexture(ShaderIDs.s_CamDepthBuffer, _camDepthCache.targetTexture);
 
-            // Zbuffer params
-            //float4 _ZBufferParams;            // x: 1-far/near,     y: far/near, z: x/far,     w: y/far
             float near = _camDepthCache.nearClipPlane, far = _camDepthCache.farClipPlane;
-            _copyDepthMaterial.SetVector(ShaderIDs.s_CustomZBufferParams, new Vector4(1f - far / near, far / near, (1f - far / near) / far, (far / near) / far));
 
             _copyDepthMaterial.SetFloat(RegisterSeaFloorDepthInput.ShaderIDs.s_HeightOffset, _relative ? transform.position.y : 0f);
 
-            // Altitudes for near and far planes
+            // Orthographic device depth is linear between these two planes. Use
+            // the actual far-plane altitude, not another far distance below near.
             float ymax = _camDepthCache.transform.position.y - near;
-            float ymin = ymax - far;
+            float ymin = _camDepthCache.transform.position.y - far;
             _copyDepthMaterial.SetVector(ShaderIDs.s_HeightNearHeightFar, new Vector2(ymax, ymin));
 
             // Copy from depth buffer into the cache
-            Graphics.Blit(null, _cacheTexture, _copyDepthMaterial);
+            var previous = RenderTexture.active;
+            try
+            {
+                Graphics.Blit(null, _cacheTexture, _copyDepthMaterial);
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+            }
+
+            return _cacheTexture.IsCreated();
         }
 
 #if UNITY_EDITOR
@@ -500,28 +549,64 @@ namespace Crest
 
             if ((isBakeable && GUILayout.Button("Save Cache to File")) || (isRebakeable && GUILayout.Button("Update Saved Cache File")))
             {
-                if (!serializedObject.FindProperty("_relative").boolValue)
+                var wasRelative = serializedObject.FindProperty("_relative").boolValue;
+                var wasBaked = dc.Type == OceanDepthCache.OceanDepthCacheType.Baked;
+                var populated = false;
+                var written = false;
+                RenderTexture rt = null;
+                string path = null;
+                var previous = RenderTexture.active;
+                Texture2D tex = null;
+                try
                 {
-                    // It is always relative except for old data which should now be new data.
-                    serializedObject.FindProperty("_relative").boolValue = true;
-                    serializedObject.ApplyModifiedProperties();
+                    if (!wasRelative)
+                    {
+                        // It is always relative except for old data which should now be new data.
+                        serializedObject.FindProperty("_relative").boolValue = true;
+                        serializedObject.ApplyModifiedProperties();
+                    }
+
+                    populated = dc.PopulateCacheInternal(updateComponents: true);
+                    rt = dc.CacheTexture;
+                    if (!populated || rt == null || !rt.IsCreated())
+                    {
+                        Debug.LogError("Crest: Depth cache could not be populated. The saved cache was not overwritten.", dc);
+                        return;
+                    }
+
+                    RenderTexture.active = rt;
+                    // Keep the RFloat capture's precision through CPU readback.
+                    // Encoding half data as float cannot restore the lost heights.
+                    tex = new Texture2D(rt.width, rt.height, TextureFormat.RFloat, false, true);
+                    tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0, false);
+                    var bytes = tex.EncodeToEXR(Texture2D.EXRFlags.OutputAsFloat);
+
+                    path = dc.SavedCache ?
+                        AssetDatabase.GetAssetPath(dc.SavedCache) : $"Assets/OceanDepthCache_{Guid.NewGuid()}.exr";
+                    System.IO.File.WriteAllBytes(path, bytes);
+                    written = true;
+                }
+                finally
+                {
+                    RenderTexture.active = previous;
+                    Helpers.Destroy(tex);
+
+                    // A baked cache still samples its old file until this write
+                    // succeeds. A populated realtime cache already contains the
+                    // new relative heights and must keep its matching flag.
+                    if (!wasRelative && !written && (wasBaked || !populated))
+                    {
+                        serializedObject.FindProperty("_relative").boolValue = false;
+                        serializedObject.ApplyModifiedProperties();
+                        dc.UpdateCacheQuadRelativeHeight();
+                    }
+                }
+
+                if (!wasRelative)
+                {
                     Debug.Log($"Crest: {target} depth is now relative!");
                 }
 
-                dc.PopulateCacheInternal(updateComponents: true);
-
-                var rt = dc.CacheTexture;
-                RenderTexture.active = rt;
-                Texture2D tex = new Texture2D(rt.width, rt.height, TextureFormat.RGBAHalf, false);
-                tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
-                RenderTexture.active = null;
-
-                byte[] bytes;
-                bytes = tex.EncodeToEXR(Texture2D.EXRFlags.OutputAsFloat);
-
-                string path = dc.SavedCache ?
-                    AssetDatabase.GetAssetPath(dc.SavedCache) : $"Assets/OceanDepthCache_{Guid.NewGuid()}.exr";
-                System.IO.File.WriteAllBytes(path, bytes);
                 AssetDatabase.ImportAsset(path);
 
                 if (dc.SavedCache == null)
@@ -542,6 +627,9 @@ namespace Crest
                 ti.textureCompression = TextureImporterCompression.Uncompressed;
                 ti.filterMode = FilterMode.Bilinear;
                 ti.wrapMode = TextureWrapMode.Clamp;
+                // Preserve the requested capture resolution in the default import
+                // settings. Explicit platform overrides remain under user control.
+                ti.maxTextureSize = Mathf.Max(ti.maxTextureSize, Mathf.NextPowerOfTwo(Mathf.Max(rt.width, rt.height)));
                 // Values are slightly different with NPOT Scale applied.
                 ti.npotScale = TextureImporterNPOTScale.None;
 

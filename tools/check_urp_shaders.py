@@ -69,6 +69,9 @@ def main():
         "clustered-probes": features + shadows + local + ["_CLUSTER_LIGHT_LOOP", "_REFLECTION_PROBE_ATLAS", "_REFLECTION_PROBE_BLENDING", "_REFLECTION_PROBE_BOX_PROJECTION"],
         "screen-shadows": features + ["_MAIN_LIGHT_SHADOWS_SCREEN", "_SHADOWS_SOFT_MEDIUM"],
         "reflection-overrides": features + shadows + ["_PLANARREFLECTIONS_ON", "_OVERRIDEREFLECTIONCUBEMAP_ON"],
+        "planar-probes": features + shadows + ["_PLANARREFLECTIONS_ON"],
+        "planar-flow": features + shadows + ["_PLANARREFLECTIONS_ON", "_FLOW_ON", "CREST_FLOATING_ORIGIN"],
+        "planar-stereo": features + shadows + ["_PLANARREFLECTIONS_ON", "STEREO_INSTANCING_ON"],
         "procedural-sky": features + ["_PROCEDURALSKY_ON"],
         "early-underwater": features + shadows + ["CREST_UNDERWATER_BEFORE_TRANSPARENT"],
         "orthographic": features + shadows + ["_PROJECTION_ORTHOGRAPHIC"],
@@ -99,6 +102,21 @@ def main():
     add_shader(CREST / "Underwater/UnderwaterCurtain.shader", {"minimal": [], "caustics": features + shadows})
     for path in (EXAMPLES / "Examples/Shaders/Masked.shader", EXAMPLES / "Shared/Shaders/ExampleUnderwaterTransparentSurfaceShader.shader"):
         add_shader(path, {"minimal": [], "lighting": shadows + local + ["_SUBSURFACESCATTERING_ON", "_CAUSTICS_ON"]})
+    # Cover height reconstruction and each consumer of the revised shallow-water
+    # precision path, including both users of the shared Gerstner implementation.
+    inputs = CREST / "OceanInputs"
+    add_shader(inputs / "Resources/CopyDepthIntoCache.shader", {"minimal": []})
+    add_shader(inputs / "AnimWavesSpectrum.shader", {"minimal": [], "attenuated-blend": ["_ATTENUATIONAFFECTSBLENDWEIGHT_ON"]})
+    for path in (inputs / "Resources/AnimWavesGerstner.shader", inputs / "Resources/AnimWavesGerstnerGeometry.shader"):
+        add_shader(path, {"minimal": []})
+    add_shader(inputs / "Resources/AnimWavesGerstnerBatch.shader", {"minimal": [], "directed": ["CREST_DIRECT_TOWARDS_POINT_INTERNAL"]})
+    add_shader(inputs / "AnimWavesGerstnerBatchGeometry.shader", {"minimal": [], "directed-feather": ["CREST_DIRECT_TOWARDS_POINT_INTERNAL", "_WEIGHTFROMVERTEXCOLOURRED_ON", "_FEATHERATUVEXTENTS_ON"]})
+    for path in (inputs / "AnimWavesRemoveGeometry.shader", inputs / "AnimWavesSetHeightToGeometry.shader",
+                 inputs / "Resources/AnimWavesSetBaseWaterHeightUsingGeometry.shader",
+                 inputs / "Resources/ClipSurfaceConvexHull.shader", inputs / "Resources/ClipSurfaceSignedDistance.shader",
+                 CREST / "OceanSurfaceAlpha.shader", CREST / "Underwater/Resources/UnderwaterMask.shader"):
+        add_shader(path, {"minimal": []})
+    add_shader(CREST / "Resources/UpdateShadow.shader", {"minimal": [], "cascade": shadows, "screen-shadow": ["_MAIN_LIGHT_SHADOWS_SCREEN"]})
     compute_path = source_root / CREST / "Resources/UpdateFoam.compute"
     cases.append(("UpdateFoam", compute_path.read_text(encoding="utf-8-sig"), compute_path.parent,
                   "cs_6_0", "UpdateFoam", ["SHADER_STAGE_COMPUTE"]))

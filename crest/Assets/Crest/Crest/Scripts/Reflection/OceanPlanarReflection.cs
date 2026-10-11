@@ -42,14 +42,23 @@ namespace Crest
         // Remove element if exists
         public static void Remove(int camerainstanceid)
         {
-            if (!GetRenderTexture(camerainstanceid)) return;
+            // Remove destroyed/lost textures too. Unity's null comparison does not
+            // tell us whether a dictionary entry or the fast-path cache still exists.
             _collection = _collection.Where(e => e.Key != camerainstanceid).ToArray(); //rebuild array without element
-            _currentreflectiontexture = null;
-            _referenceCameraInstanceId = -1;
+            if (_referenceCameraInstanceId == camerainstanceid)
+            {
+                _currentreflectiontexture = null;
+                _referenceCameraInstanceId = -1;
+            }
         }
 
         public static void Register(int instanceId, RenderTexture reflectionTexture)
         {
+            // A resized or reformatted reflection can replace the texture for the
+            // same camera while that camera remains the most recent lookup.
+            if (_referenceCameraInstanceId == instanceId)
+                _currentreflectiontexture = reflectionTexture;
+
             var currentcollection = _collection;
             for (var i = 0; i < currentcollection.Length; i++)
             {
@@ -94,7 +103,9 @@ namespace Crest
         [SerializeField] bool _disableOcclusionCulling = true;
         [SerializeField] bool _disablePixelLights = true;
         [SerializeField] bool _disableShadows = false;
-        [SerializeField] int _textureSize = 256;
+        [Min(1)] [SerializeField] int _textureSize = 256;
+        [Tooltip("Generate a mip chain for stable rough planar reflections. Adds approximately one third to reflection colour texture memory and generates mips once per reflection refresh. Disable to use only the full-resolution image.")]
+        [SerializeField] bool _useMipMaps = true;
         [SerializeField] float _clipPlaneOffset = 0.07f;
         [SerializeField] bool _hdr = true;
         [SerializeField] bool _stencil = false;
@@ -117,6 +128,8 @@ namespace Crest
         [SerializeField] int _frameRefreshOffset = 0;
 
         RenderTexture _reflectionTexture;
+        bool _textureHDR;
+        bool _textureStencil;
 
         Camera _camViewpoint;
         Skybox _camViewpointSkybox;
@@ -167,7 +180,9 @@ namespace Crest
 
         void LateUpdate()
         {
-            if (!RequestRefresh(Time.renderedFrameCount))
+            // A lost/uncreated target needs recovery even on a skipped refresh
+            // frame. Only keep the previous image when its native resource exists.
+            if (_reflectionTexture && _reflectionTexture.IsCreated() && !RequestRefresh(Time.renderedFrameCount))
                 return; // Skip if not need to refresh on this frame
 
             if (OceanRenderer.Instance == null)
@@ -193,6 +208,7 @@ namespace Crest
                     editor._disablePixelLights = _disablePixelLights;
                     editor._disableShadows = _disableShadows;
                     editor._textureSize = _textureSize;
+                    editor._useMipMaps = _useMipMaps;
                     editor._clipPlaneOffset = _clipPlaneOffset;
                     editor._hdr = _hdr;
                     editor._stencil = _stencil;
@@ -207,7 +223,7 @@ namespace Crest
 
             CreateWaterObjects(_camViewpoint);
 
-            if (!_camReflections)
+            if (!_camReflections || !_reflectionTexture || !_reflectionTexture.IsCreated())
             {
                 return;
             }
@@ -296,6 +312,23 @@ namespace Crest
             try
             {
                 CrestRenderRequest.Render(_camReflections, _reflectionTexture, !_disableShadows);
+                // SubmitRenderRequest renders synchronously. Generate only after its
+                // final colour copy/resolve, never while the camera is still rendering.
+                // Skipped refresh frames retain the previous complete mip chain.
+                if (_reflectionTexture.useMipMap)
+                    _reflectionTexture.GenerateMips();
+
+                // Do not publish a newly allocated (or failed) render target before
+                // both the base image and its mip chain have been populated.
+                PreparedReflections.Register(_camViewpoint.GetHashCode(), _reflectionTexture);
+            }
+            catch
+            {
+                // Existing targets are updated in place. A failed render or mip
+                // generation can leave mismatched levels, so use the environment
+                // fallback until a complete reflection is rendered successfully.
+                PreparedReflections.Remove(_camViewpoint.GetHashCode());
+                throw;
             }
             finally
             {
@@ -378,6 +411,7 @@ namespace Crest
             _camReflections.fieldOfView = _camViewpoint.fieldOfView;
             _camReflections.orthographicSize = _camViewpoint.orthographicSize;
             _camReflections.allowMSAA = _allowMSAA;
+            _camReflections.allowHDR = _hdr;
             _camReflections.aspect = _camViewpoint.aspect;
             _camReflections.useOcclusionCulling = !_disableOcclusionCulling && _camViewpoint.useOcclusionCulling;
         }
@@ -386,22 +420,40 @@ namespace Crest
         void CreateWaterObjects(Camera currentCamera)
         {
             // Reflection render texture
-            if (!_reflectionTexture || _reflectionTexture.width != _textureSize)
+            var textureSize = Mathf.Clamp(_textureSize, 1, Mathf.Max(SystemInfo.maxTextureSize, 1));
+            if (!_reflectionTexture || !_reflectionTexture.IsCreated() || _reflectionTexture.width != textureSize
+                || _textureHDR != _hdr || _textureStencil != _stencil || _reflectionTexture.useMipMap != _useMipMaps)
             {
+                PreparedReflections.Remove(currentCamera.GetHashCode());
                 if (_reflectionTexture)
                 {
+                    if (_camReflections) _camReflections.targetTexture = null;
                     Helpers.Destroy(_reflectionTexture);
                 }
 
                 var format = _hdr ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32;
+                if (!SystemInfo.SupportsRenderTextureFormat(format))
+                    format = RenderTextureFormat.ARGB32;
                 Debug.Assert(SystemInfo.SupportsRenderTextureFormat(format), "Crest: The graphics device does not support the render texture format " + format.ToString());
-                _reflectionTexture = new RenderTexture(_textureSize, _textureSize, _stencil ? 24 : 16, format)
+                _reflectionTexture = new RenderTexture(textureSize, textureSize, _stencil ? 24 : 16, format)
                 {
                     name = "__WaterReflection" + GetHashCode(),
-                    isPowerOfTwo = true,
+                    // The request resolves into a single-sample destination before
+                    // mip generation, including when the camera allows MSAA.
+                    antiAliasing = 1,
+                    useMipMap = _useMipMaps,
+                    autoGenerateMips = false,
+                    filterMode = _useMipMaps ? FilterMode.Trilinear : FilterMode.Bilinear,
+                    wrapMode = TextureWrapMode.Clamp,
                 };
-                _reflectionTexture.Create();
-                PreparedReflections.Register(currentCamera.GetHashCode(), _reflectionTexture);
+                if (!_reflectionTexture.Create())
+                {
+                    Helpers.Destroy(_reflectionTexture);
+                    _reflectionTexture = null;
+                    return;
+                }
+                _textureHDR = _hdr;
+                _textureStencil = _stencil;
             }
 
             // Camera for reflection

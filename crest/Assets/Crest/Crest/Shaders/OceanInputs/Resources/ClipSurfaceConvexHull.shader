@@ -59,7 +59,7 @@ Shader "Crest/Inputs/Clip Surface/Convex Hull"
 		);
 
 		float3 uv = WorldToUV(input.positionWS.xz, _CrestCascadeData[_LD_SliceIndex], _LD_SliceIndex);
-		half seaLevelOffset = _LD_TexArray_SeaFloorDepth.SampleLevel(LODData_linear_clamp_sampler, uv, 0.0).y;
+		float seaLevelOffset = _LD_TexArray_SeaFloorDepth.SampleLevel(LODData_linear_clamp_sampler, uv, 0.0).y;
 
 		// Move to sea level.
 		surfacePositionWS.y += _OceanCenterPosWorld.y + seaLevelOffset;

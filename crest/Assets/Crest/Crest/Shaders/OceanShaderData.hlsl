@@ -147,6 +147,8 @@ half _DirectionalLightFallOffFar;
 half _PlanarReflectionNormalsStrength;
 half _PlanarReflectionDistanceFactor;
 half _PlanarReflectionIntensity;
+half _PlanarReflectionRoughnessScale;
+half _PlanarReflectionEdgeFade;
 #endif
 
 #if _PROCEDURALSKY_ON

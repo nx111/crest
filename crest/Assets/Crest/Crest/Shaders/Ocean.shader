@@ -77,6 +77,10 @@ Shader "Crest/Ocean"
 		_PlanarReflectionDistanceFactor("Planar Reflections Distortion Distance Factor", Range(0.0, 1.0)) = 0.0
 		// Multiplier to adjust how intense the reflection is
 		_PlanarReflectionIntensity("Planar Reflection Intensity", Range(0.0, 1.0)) = 1.0
+		// Screen-space mip filtering for rough water. Requires mipmaps on OceanPlanarReflection.
+		_PlanarReflectionRoughnessScale("Planar Reflection Roughness Filtering", Range(0.0, 2.0)) = 1.0
+		// Fade incomplete screen-edge reflections back to the reflection environment.
+		_PlanarReflectionEdgeFade("Planar Reflection Edge Fade", Range(0.0, 0.25)) = 0.02
 		// Whether to use an overridden reflection cubemap (provided in the next property)
 		[Toggle] _OverrideReflectionCubemap("Override Reflection Cubemap", Float) = 0
 		// Custom environment map to reflect
@@ -422,7 +426,8 @@ Shader "Crest/Ocean"
 				}
 
 				// Data that needs to be sampled at the displaced position
-				half seaLevelOffset = 0.0;
+				// Absolute water-level offsets must retain the precision of the depth data.
+				float seaLevelOffset = 0.0;
 				o.seaLevelDerivs = 0.0;
 				half seaDepth = 0;
 				if (wt_smallerLod > 0.0001)

@@ -91,7 +91,7 @@ Varyings Vert(Attributes v)
 	}
 
 	// Data that needs to be sampled at the displaced position.
-	half seaLevelOffset = 0.0;
+	float seaLevelOffset = 0.0;
 	if (wt_smallerLod > 0.0001)
 	{
 		const float3 uv_slice_smallerLodDisp = WorldToUV(worldPos.xz, cascadeData0, _LD_SliceIndex);

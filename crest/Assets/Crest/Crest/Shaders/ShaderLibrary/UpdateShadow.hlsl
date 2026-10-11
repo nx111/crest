@@ -57,7 +57,7 @@ half CrestComputeShadowFade(const float4 i_positionWS);
 // Compiler shows warning when using intermediate returns, disable this.
 #pragma warning(push)
 #pragma warning(disable: 4000)
-half ComputeShadow(const float4 i_positionWS, const float i_jitterDiameter, const half i_terrainHeight)
+half ComputeShadow(const float4 i_positionWS, const float i_jitterDiameter, const float i_terrainHeight)
 {
 	float4 positionWS = i_positionWS;
 
@@ -70,7 +70,7 @@ half ComputeShadow(const float4 i_positionWS, const float i_jitterDiameter, cons
 		// If we are not within a terrain, then check for shadow bleeding.
 		if (i_positionWS.y > i_terrainHeight)
 		{
-			half terrainHeight = 0.0;
+			float terrainHeight = 0.0;
 			SampleTerrainHeight
 			(
 				_LD_TexArray_SeaFloorDepth,
@@ -156,7 +156,7 @@ half2 Frag(Varyings input) : SV_Target
 		positionWS.xyz -= _WorldSpaceCameraPos.xyz;
 #endif
 
-		half terrainHeight = 0.0;
+		float terrainHeight = 0.0;
 		SampleTerrainHeight
 		(
 			_LD_TexArray_SeaFloorDepth,
