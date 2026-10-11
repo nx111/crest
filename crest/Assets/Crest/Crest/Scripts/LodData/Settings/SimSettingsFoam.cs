@@ -35,7 +35,7 @@ namespace Crest
         [Range(0f, 1f), Tooltip("How much of the waves generate foam. Higher values will lower the threshold for foam generation, giving a larger area.")]
         public float _waveFoamCoverage = 0.55f;
 
-        [Tooltip("The minimum LOD  to sample waves from. Zero means all waves and increasing will exclude lower wavelengths which can help with too much foam near the camera.")]
+        [Tooltip("The minimum LOD to sample waves from for whitecap generation. Zero includes all waves; increasing excludes shorter wavelengths without changing shoreline foam positioning.")]
         [SerializeField, Range(0, LodDataMgr.MAX_LOD_COUNT - 2)]
         internal int _filterWaves;
         public int FilterWaves => _filterWaves;
@@ -49,7 +49,7 @@ namespace Crest
         [Header("Developer settings")]
         [Tooltip("The render texture format to use for the foam simulation. This is mostly for debugging and should be left at its default.")]
         public GraphicsFormat _renderTextureGraphicsFormat = GraphicsFormat.R16_SFloat;
-        [Range(15f, 200f), Tooltip("Frequency to run the foam sim, in updates per second. Lower frequencies can be more efficient but may lead to visible jitter. Default is 30 updates per second.")]
+        [Range(15f, 200f), Tooltip("Frequency to run the foam sim, in updates per second. Lower frequencies can be more efficient but may lead to visible jitter. Built-in additive foam inputs preserve their strength authored at the default 30 updates per second.")]
         public float _simulationFrequency = 30f;
 
         public override void AddToSettingsHash(ref int settingsHash)

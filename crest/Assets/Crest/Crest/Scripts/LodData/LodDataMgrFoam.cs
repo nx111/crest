@@ -4,6 +4,7 @@
 
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
+using UnityEngine.Rendering;
 
 namespace Crest
 {
@@ -35,6 +36,9 @@ namespace Crest
         readonly int sp_ShorelineFoamStrength = Shader.PropertyToID("_ShorelineFoamStrength");
         readonly int sp_NeedsPrewarming = Shader.PropertyToID("_NeedsPrewarming");
         readonly int sp_CrestMinimumWavesSlice = Shader.PropertyToID("_CrestMinimumWavesSlice");
+        readonly int sp_CrestFoamInputScale = Shader.PropertyToID("_CrestFoamInputScale");
+
+        float _inputTimeScale;
 
         public override SimSettingsBase SettingsBase => Settings;
         public SettingsType Settings => _ocean._simSettingsFoam != null ? _ocean._simSettingsFoam : GetDefaultSettings<SettingsType>();
@@ -88,6 +92,37 @@ namespace Crest
             numSubsteps = Mathf.FloorToInt(timeToSimulate * Settings._simulationFrequency);
 
             substepDt = numSubsteps > 0 ? (1f / Settings._simulationFrequency) : 0f;
+            _inputTimeScale = CalculateFoamInputScale(substepDt, Settings._foamFadeRate);
+        }
+
+        static float IntegratedSourceWeight(float deltaTime, float fadeRate)
+        {
+            var exponent = fadeRate * deltaTime;
+            if (exponent <= 0.001f)
+            {
+                return deltaTime * (1f - exponent * (0.5f - exponent / 6f));
+            }
+
+            return (1f - Mathf.Exp(-exponent)) / fadeRate;
+        }
+
+        internal static float CalculateFoamInputScale(float deltaTime, float fadeRate)
+        {
+            var dt = Mathf.Max(deltaTime, 0f);
+            var rate = Mathf.Max(fadeRate, 0f);
+            // Existing input strengths describe one deposit at the default 30 Hz.
+            // Normalize the integrated source term to preserve that exact deposit,
+            // while making other simulation frequencies produce the same source.
+            const float referenceStep = 1f / 30f;
+            return IntegratedSourceWeight(dt, rate) / IntegratedSourceWeight(referenceStep, rate);
+        }
+
+        protected override void SubmitDraws(int lodIdx, CommandBuffer buf)
+        {
+            // Only the built-in additive foam shaders use this multiplier. Override
+            // and custom input shaders retain their existing output semantics.
+            buf.SetGlobalFloat(sp_CrestFoamInputScale, _inputTimeScale);
+            base.SubmitDraws(lodIdx, buf);
         }
 
         readonly static string s_textureArrayName = "_LD_TexArray_Foam";

@@ -229,8 +229,12 @@ class FoamQualityTests(unittest.TestCase):
             self.assertAlmostEqual(offsets[3].x, offsets[5].x, delta=1e-10)
 
     def test_foam_threshold_is_finite_and_empty_water_stays_empty(self):
-        shader = body(self.surface, "WhiteFoamTexture")
-        shader = shader[shader.index("i_foam = saturate("):]
+        if "CrestWhiteFoamCoverage" in self.surface:
+            shader = body(self.surface, "CrestWhiteFoamCoverage")
+        else:
+            # Older revisions kept this same threshold inside the texture sampler.
+            shader = body(self.surface, "WhiteFoamTexture")
+            shader = shader[shader.index("i_foam = saturate("):]
         for amount in (0.0, 0.1, 0.5, 1.0):
             for feather in (0.0, 0.001, 0.4, 1.0):
                 for footprint in (0.0, 0.01, 0.5, 2.0):

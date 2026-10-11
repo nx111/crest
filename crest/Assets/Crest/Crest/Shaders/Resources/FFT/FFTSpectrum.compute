@@ -60,20 +60,20 @@ float RandGauss(inout uint rngState)
 void DeepDispersion(float k, out float w, out float dwdk)
 {
 	w = sqrt(abs(_Gravity * k));
+	// Spectrum density uses the physical dispersion and its Jacobian. Looping
+	// the animation must not change the energy assigned to a wave vector.
+	dwdk = w > 0.0 ? _Gravity / (2.0f * w) : 0.0;
+}
 
-	// Allow FFT to loop in time
-	if( _Period > 0.0 )
+float CrestQuantizeWaveFrequency(float frequency)
+{
+	// Only the time evolution is quantized. This also handles the zero mode
+	// without the previous divisions by frequency or by a zero loop count.
+	if (_Period > 0.0)
 	{
-		float thisPeriod = PI2 / w;
-		float loops = _Period / thisPeriod;
-		// Make sure loops integral number of times
-		loops = ceil( loops );
-		// Work our way back to frequency
-		thisPeriod = _Period / loops;
-		w = PI2 / thisPeriod;
+		frequency = ceil(frequency * _Period / PI2) * PI2 / _Period;
 	}
-
-	dwdk = _Gravity / (2.0f * w);
+	return frequency;
 }
 
 float AlphaBetaSpectrum(float A, float B, float g, float w, float wm)
@@ -118,7 +118,7 @@ void SpectrumInitalize(uint3 id : SV_DispatchThreadID)
 	const int2 center = _Size.xx / 2;
 	const int2 coord = id.xy - center;
 
-	if( coord.x == 0 && coord.y == 0 )
+	if ((coord.x == 0 && coord.y == 0) || _Gravity <= 0.0 || _WindSpeed <= 0.0)
 	{
 		_ResultInit[id] = 0.0;
 		return;
@@ -228,6 +228,7 @@ void SpectrumUpdate(uint3 id : SV_DispatchThreadID)
 	// Dispersion
 	float w; float dwdk;
 	DeepDispersion(kMag, w, dwdk);
+	w = CrestQuantizeWaveFrequency(w);
 
 	// Advance time
 	float sw; float cw;

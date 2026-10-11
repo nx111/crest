@@ -21,6 +21,8 @@ Shader "Crest/Inputs/Foam/Add From Vert Colours"
 
 			#include "UnityCG.cginc"
 
+			float _CrestFoamInputScale;
+
 			CBUFFER_START(CrestPerOceanInput)
 			float _Strength;
 			float3 _DisplacementAtInputPosition;
@@ -54,7 +56,7 @@ Shader "Crest/Inputs/Foam/Add From Vert Colours"
 
 			half4 Frag(Varyings input) : SV_Target
 			{
-				return _Strength * input.col.x;
+				return _Strength * input.col.x * _CrestFoamInputScale;
 			}
 			ENDCG
 		}

@@ -64,6 +64,9 @@ def main():
         "minimal": [],
         "surface": features + shadows,
         "flow": features + shadows + ["_FLOW_ON", "CREST_FLOATING_ORIGIN", "_DIRECTIONALLIGHTVARYROUGHNESS_ON"],
+        "foam-flat": ["_FOAM_ON", "_TRANSPARENCY_ON", "_UNDERWATER_ON"] + shadows,
+        "foam-flat-flow": ["_FOAM_ON", "_TRANSPARENCY_ON", "_UNDERWATER_ON", "_FLOW_ON", "CREST_FLOATING_ORIGIN"] + shadows,
+        "foam-3d-no-normal-map": [feature for feature in features if feature != "_APPLYNORMALMAPPING_ON"] + shadows,
         "local-lights": features + shadows + local,
         "vertex-lights": features + shadows + ["_ADDITIONAL_LIGHTS_VERTEX"],
         "clustered-probes": features + shadows + local + ["_CLUSTER_LIGHT_LOOP", "_REFLECTION_PROBE_ATLAS", "_REFLECTION_PROBE_BLENDING", "_REFLECTION_PROBE_BOX_PROJECTION"],
@@ -117,9 +120,15 @@ def main():
                  CREST / "OceanSurfaceAlpha.shader", CREST / "Underwater/Resources/UnderwaterMask.shader"):
         add_shader(path, {"minimal": []})
     add_shader(CREST / "Resources/UpdateShadow.shader", {"minimal": [], "cascade": shadows, "screen-shadow": ["_MAIN_LIGHT_SHADOWS_SCREEN"]})
-    compute_path = source_root / CREST / "Resources/UpdateFoam.compute"
-    cases.append(("UpdateFoam", compute_path.read_text(encoding="utf-8-sig"), compute_path.parent,
-                  "cs_6_0", "UpdateFoam", ["SHADER_STAGE_COMPUTE"]))
+    for path in (inputs / "FoamAddFromTex.shader", inputs / "FoamAddFromVertCol.shader",
+                 inputs / "Resources/FoamSplineGeometry.shader", inputs / "FoamOverride.shader"):
+        add_shader(path, {"minimal": []})
+    for path in (CREST / "Resources/UpdateFoam.compute", CREST / "Resources/Gerstner.compute",
+                 CREST / "Resources/FFT/FFTSpectrum.compute", CREST / "Resources/FFT/FFTBake.compute"):
+        compute_path = source_root / path
+        program = compute_path.read_text(encoding="utf-8-sig")
+        for entry in re.findall(r"^#pragma\s+kernel\s+(\w+)\s*$", program, re.M):
+            cases.append((entry, program, compute_path.parent, "cs_6_0", entry, ["SHADER_STAGE_COMPUTE"]))
 
     def compile_case(case):
         name, program, includes, profile, entry, keywords = case

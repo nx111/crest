@@ -65,29 +65,30 @@ void SampleDisplacements( in Texture2DArray i_dispSampler, in float3 i_uv_slice,
 	SampleDisplacements( i_dispSampler, i_uv_slice, i_wt, io_worldPos, unusedVariance );
 }
 
+float2 CrestWaveNormalSlope(float3 tangentX, float3 tangentZ)
+{
+	float3 crossProd = cross(tangentZ, tangentX);
+	// The caller accumulates slopes with an implicit Y of one, then normalises.
+	// Passing a unit normal's XZ alone would replace tan(theta) with sin(theta)
+	// and flatten steep waves. Keep the existing upward fallback for inversions.
+	// Tangents are per world unit, so the guard is independent of LOD texel size.
+	return crossProd.xz / max(crossProd.y, 0.0001);
+}
+
 void SampleDisplacementsNormals(in Texture2DArray i_dispSampler, in float3 i_uv_slice, in float i_wt, in float i_invRes, in float i_texelSize, inout float3 io_worldPos, inout float2 io_nxz, inout half io_sss)
 {
-	const half4 data = i_dispSampler.SampleLevel(LODData_linear_clamp_sampler, i_uv_slice, 0.0);
-	const half3 disp = data.xyz;
+	// Keep the centre sample at the same precision as its neighbours. Converting
+	// it alone to half can create a false slope from filtered float samples.
+	const float4 data = i_dispSampler.SampleLevel(LODData_linear_clamp_sampler, i_uv_slice, 0.0);
+	const float3 disp = data.xyz;
 	io_worldPos += i_wt * disp;
 
 	float3 dd = float3(i_invRes, 0.0, i_texelSize);
 	float3 disp_x = dd.zyy + i_dispSampler.SampleLevel( LODData_linear_clamp_sampler, i_uv_slice + float3(dd.xy, 0.0), 0.0 ).xyz;
 	float3 disp_z = dd.yyz + i_dispSampler.SampleLevel( LODData_linear_clamp_sampler, i_uv_slice + float3(dd.yx, 0.0), 0.0 ).xyz;
 
-	// Normal
-	float3 n;
-	{
-		float3 crossProd = cross(disp_z - disp, disp_x - disp);
-
-		// Situation could arise where cross returns 0, prob when arguments are two aligned vectors. This
-		// resulted in NaNs and flashing screen in HDRP. Force normal to point upwards as the only time
-		// it should point downwards is for underwater (handled elsewhere) or in surface inversions which
-		// should not happen for well tweaked waves, and look broken anyway.
-		crossProd.y = max(crossProd.y, 0.0001);
-
-		n = normalize(crossProd);
-	}
+	const float3 tangentX = (disp_x - disp) / i_texelSize;
+	const float3 tangentZ = (disp_z - disp) / i_texelSize;
 
 	// SSS - based off pinch
 #if _SUBSURFACESCATTERING_ON
@@ -99,7 +100,7 @@ void SampleDisplacementsNormals(in Texture2DArray i_dispSampler, in float3 i_uv_
 	}
 #endif // _SUBSURFACESCATTERING_ON
 
-	io_nxz += i_wt * n.xz;
+	io_nxz += i_wt * CrestWaveNormalSlope(tangentX, tangentZ);
 }
 
 void SampleClip(in Texture2DArray i_oceanClipSurfaceSampler, in float3 i_uv_slice, in float i_wt, inout half io_clipValue)

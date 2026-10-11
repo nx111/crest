@@ -10,10 +10,13 @@ It does not include the commercial Crest URP package.
 - **Latest changes after `2aaeec77`** add specular filtering, stable foam integration/sampling,
   corrected water-path attenuation and caustics, followed by planar reflection filtering,
   explicit normal gradients, precise shallow-water caches and corrected underwater Fresnel blending.
+  The latest batch corrects geometric wave normals, FFT loop spectrum/timing, Gerstner phase
+  precision, FFT baking and foam transport/input/compositing.
   Their validation is offline HLSL compilation,
   C# syntax and numerical checks; **Unity/GPU validation has not been rerun for these changes**.
-  See [URP-REALISM-IMPROVEMENTS.md](URP-REALISM-IMPROVEMENTS.md) and the latest
-  [reflection and shallow-water report](URP-REFLECTIONS-AND-SHALLOW-WATER.md) for results, controls and limits.
+  See [URP-REALISM-IMPROVEMENTS.md](URP-REALISM-IMPROVEMENTS.md), the
+  [reflection and shallow-water report](URP-REFLECTIONS-AND-SHALLOW-WATER.md), and the latest
+  [wave and foam stability report](URP-WAVES-AND-FOAM-STABILITY.md) for results, controls and limits.
 - Renderer: **Universal Renderer with Render Graph enabled**, initially Forward,
   Linear color, MSAA off, render scale 1.0. The 2D Renderer is not supported.
 - **Headless Unity import, C# API binding, pipeline creation, example asset conversion
@@ -57,9 +60,11 @@ a separate local compatibility test, not a tested configuration of this branch.
 | Examples | Surface Shaders and the gradient sky replaced with explicit URP passes; Standard/terrain materials and built-in default material references converted. The shared camera prefab includes URP camera data. Example custom camera commands now run after the water mask, before scene depth/opaques. Serialized BIRP `CameraEvent` values do not define URP execution order. |
 | Project setup | URP package/assembly references, missing Splines dependency, stable metadata for new files, repeatable setup/validation menus. |
 
-FFT/Gerstner generation, wave query and buoyancy algorithms are retained. Later
-foam changes use exact integration for decay/built-in generation and filtered far-field
-sampling; surface optics and shading changes are detailed in the realism report above. The
+The FFT/Gerstner generation and wave-query/buoyancy architecture is retained. Later
+changes correct wave phase precision, FFT loop spectrum/timing, geometric normals and
+FFT readback; foam uses exact source/decay integration, midpoint flow backtracing,
+time-normalized built-in additive inputs and filtered coverage/color sampling.
+Surface optics and shading changes are detailed in the reports above. The
 offscreen simulation input shaders that use UnityCG remain explicit draw shaders;
 they do not require the built-in camera lighting or GrabPass pipeline.
 
@@ -98,6 +103,10 @@ they do not require the built-in camera lighting or GrabPass pipeline.
    processing runs on base Game/Scene View cameras and is excluded from overlay,
    preview and reflection cameras. The replacement selected-transparent draw also
    runs without an ocean and on reflection/overlay cameras so excluded objects remain visible.
+8. Re-bake existing FFT collision assets after updating. The corrected loop spectrum
+   and Time Scale handling must match both the displayed waves and baked CPU queries.
+   Built-in additive foam inputs retain their default 30 Hz deposit; review wake
+   strengths previously tuned at other simulation frequencies.
 
 ## 本地复核清单
 
@@ -105,9 +114,10 @@ they do not require the built-in camera lighting or GrabPass pipeline.
 该轮静态／数值回归与 37 帧 GPU 检查均通过，包含透明折射、局部光源、盒投影及
 两种全屏水下路径。详细范围、对照图和仍待验收的差距见
 [渲染质量复核报告](URP-QUALITY-AUDIT.md)；自动检查的复现步骤见
-[UnityQualityTests](../tools/UnityQualityTests/README.md)。之后两批渲染质量修改
+[UnityQualityTests](../tools/UnityQualityTests/README.md)。之后三批渲染质量修改
 尚未重跑 GPU 检查，优先复核[高光、泡沫与光学项目](URP-REALISM-IMPROVEMENTS.md#5-本地画面验收与后续优先级)
-及[反射、法线与浅水项目](URP-REFLECTIONS-AND-SHALLOW-WATER.md#6-本地画面与性能验收)。
+、[反射、法线与浅水项目](URP-REFLECTIONS-AND-SHALLOW-WATER.md#6-本地画面与性能验收)
+及[波浪时序、浪面法线与泡沫项目](URP-WAVES-AND-FOAM-STABILITY.md#6-本地画面与性能验收)。
 以下仍是完整人工验收项：
 
 - [ ] **焦散位置**：浅水池底放置可辨识物体，分别从水上和水下观察；转动、平移相机，
@@ -148,6 +158,10 @@ From the repository root:
 ```text
 python tools/check_urp.py
 python tools/check_urp_regressions.py -v
+python tools/check_wave_normals.py
+python tools/check_wave_spectrum.py
+python tools/check_foam_dynamics.py
+python tools/check_foam_shading.py
 dotnet run --project tools/StaticChecks -- crest/Assets
 git diff --check
 ```
@@ -174,6 +188,10 @@ python tools/check_urp_regressions.py --ref 175fe207 URPRegressions.test_reconst
 ```
 
 That command is expected to fail on the old source.
+
+The complete current regression suite, selected DXC shader matrix and the four new
+checks against baseline `8b56660e` are documented in
+[wave and foam verification](URP-WAVES-AND-FOAM-STABILITY.md#5-最终验证与复现).
 
 See [static-check-results.md](static-check-results.md) for the results recorded
 for this migration. Reproduce actual GPU checks using

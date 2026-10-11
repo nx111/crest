@@ -16,6 +16,8 @@ Shader "Hidden/Crest/Inputs/Foam/Spline Geometry"
 
 			#include "UnityCG.cginc"
 
+			float _CrestFoamInputScale;
+
 			CBUFFER_START(CrestPerOceanInput)
 			half _FeatherWidth;
 			float3 _DisplacementAtInputPosition;
@@ -65,7 +67,7 @@ Shader "Hidden/Crest/Inputs/Foam/Spline Geometry"
 					wt *= min( input.invNormDistToShoreline_weight.x / _FeatherWidth, 1.0 );
 				}
 
-				return 0.02 * wt;
+				return 0.02 * wt * _CrestFoamInputScale;
 			}
 			ENDCG
 		}

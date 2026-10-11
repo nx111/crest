@@ -7,11 +7,18 @@ in [URP-QUALITY-AUDIT.md](../../docs/URP-QUALITY-AUDIT.md). Those results predat
 the specular AA diagnostic and the subsequent water quality changes; rerun this
 tool on the current revision to validate those changes.
 
-The latest planar reflection, normal sampling, depth-cache and underwater Fresnel
+The planar reflection, normal sampling, depth-cache and underwater Fresnel
 changes also need the [additional manual visual/performance checks](../../docs/URP-REFLECTIONS-AND-SHALLOW-WATER.md#6-本地画面与性能验收).
 This runner does not automate their mip/roughness sweeps, elevated shallow-water
 scenes, EXR round trips or reflection-resource recovery. Offline compilation and
 numerical results for that batch are recorded in the linked report.
+
+The latest wave-normal, FFT/Gerstner and foam changes require the
+[wave and foam manual checks](../../docs/URP-WAVES-AND-FOAM-STABILITY.md#6-本地画面与性能验收).
+This runner does not automate long-running Gerstner precision, FFT loop/bake/CPU-query
+comparisons, curved-flow transport, emitter-frequency sweeps, foam LOD/phase coverage
+or temporal foam-highlight evaluation. Re-bake existing FFT collision assets before
+reviewing them against the corrected waves.
 
 Run it **only in a disposable project copy**. The runner changes scenes, camera
 state, Graphics/Quality pipeline assignments, renderer settings and material

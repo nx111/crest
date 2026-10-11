@@ -571,6 +571,8 @@ Shader "Crest/Ocean"
 
 				// Normal - geom + normal mapping. Subsurface scattering.
 				float3 dummy = 0.;
+				// Wave and water-level contributions are slopes with Y fixed to one.
+				// Normalise only after combining detail and the overall strength.
 				float3 n_pixel = float3(0.0, 1.0, 0.0);
 				half sss = 0.;
 				#if _FOAM_ON

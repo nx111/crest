@@ -43,6 +43,61 @@ float2 CrestFoamDecayAndSource(float deltaTime, float fadeRate)
 	return float2(decay, sourceWeight);
 }
 
+bool CrestFoamIsInCascade(float2 uv, float oneOverResolution)
+{
+	const float2 distanceFromCenter = abs(uv - 0.5);
+	return max(distanceFromCenter.x, distanceFromCenter.y) <= 0.5 - oneOverResolution;
+}
+
+float2 CrestFoamSampleFlow(float2 positionXZ, uint firstSlice, uint sliceCount, float2 fallbackVelocity)
+{
+	// A backtrace can cross more than one cascade. Never stretch the clamped
+	// edge texels across a region for which this cascade has no flow data.
+	[loop]
+	for (uint slice = firstSlice; slice < sliceCount; slice++)
+	{
+		const CascadeParams cascade = _CrestCascadeData[slice];
+		const float3 uv = WorldToUV(positionXZ, cascade, slice);
+		if (CrestFoamIsInCascade(uv.xy, cascade._oneOverTextureRes))
+		{
+			return SampleLod(_LD_TexArray_Flow, uv).xy;
+		}
+	}
+	// Without a midpoint sample, retain the local Euler trajectory. Returning
+	// zero would freeze fast-moving foam instead of letting it leave the domain.
+	return fallbackVelocity;
+}
+
+float2 CrestFoamBacktrace(float2 positionXZ, float deltaTime, uint slice, uint sliceCount)
+{
+	const float dt = max(deltaTime, 0.0);
+	const float3 uv = WorldToUV(positionXZ, _CrestCascadeData[slice], slice);
+	float2 velocity = SampleLod(_LD_TexArray_Flow, uv).xy;
+	if (dt > 0.0 && dot(velocity, velocity) > 0.0)
+	{
+		// Follow curved currents using a midpoint velocity. A single Euler
+		// backtrace systematically contracts foam patches in rotational flow.
+		const float2 midpoint = positionXZ - 0.5 * dt * velocity;
+		velocity = CrestFoamSampleFlow(midpoint, slice, sliceCount, velocity);
+	}
+	return positionXZ - dt * velocity;
+}
+
+float CrestFoamSampleHistory(float2 positionXZ, uint firstSlice, uint sliceCount)
+{
+	[loop]
+	for (uint slice = firstSlice; slice < sliceCount; slice++)
+	{
+		const CascadeParams cascade = _CrestCascadeDataSource[slice];
+		const float3 uv = WorldToUV(positionXZ, cascade, slice);
+		if (CrestFoamIsInCascade(uv.xy, cascade._oneOverTextureRes))
+		{
+			return SampleLod(_LD_TexArray_Foam_Source, uv).x;
+		}
+	}
+	return 0.0;
+}
+
 [numthreads(THREAD_GROUP_SIZE_X, THREAD_GROUP_SIZE_Y, 1)]
 void UpdateFoam(uint3 id : SV_DispatchThreadID)
 {
@@ -63,30 +118,8 @@ void UpdateFoam(uint3 id : SV_DispatchThreadID)
 
 	// Sample from previous frame.
 	{
-		const half2 velocity = _LD_TexArray_Flow.SampleLevel(LODData_linear_clamp_sampler, uv_slice, 0).xy;
-		const float2 worldPosXZ_flowed = worldPosXZ - _SimDeltaTime * velocity;
-
-		const half r_max = 0.5 - _CrestCascadeDataSource[sliceIndexSource]._oneOverTextureRes;
-
-		// Try to sample the source slice, if it the sample position lies within its footprint
-		const float3 uv_slice_source = WorldToUV(worldPosXZ_flowed, _CrestCascadeDataSource[sliceIndexSource], sliceIndexSource);
-		const half2 r = abs(uv_slice_source.xy - 0.5);
-
-		if (max(r.x, r.y) <= r_max)
-		{
-			foam = _LD_TexArray_Foam_Source.SampleLevel(LODData_linear_clamp_sampler, uv_slice_source, 0.0).x;
-		}
-		else if (sliceIndexSource + 1.0 < depth)
-		{
-			// Sample lies outside this cascade. Try to use the next cascade in the chain - better to get something rather lower res
-			// than nothing.
-			const float3 uv_slice_source_nextlod = WorldToUV(worldPosXZ_flowed, _CrestCascadeDataSource[sliceIndexSource + 1], sliceIndexSource + 1);
-			const half2 r2 = abs(uv_slice_source_nextlod.xy - 0.5);
-			if (max(r2.x, r2.y) <= r_max)
-			{
-				foam = _LD_TexArray_Foam_Source.SampleLevel(LODData_linear_clamp_sampler, uv_slice_source_nextlod, 0.0).x;
-			}
-		}
+		const float2 worldPosXZ_flowed = CrestFoamBacktrace(worldPosXZ, _SimDeltaTime, id.z, (uint)depth);
+		foam = CrestFoamSampleHistory(worldPosXZ_flowed, (uint)sliceIndexSource, (uint)depth);
 	}
 
 	// Integrate both loss and generation over the same step. Euler fading changes
@@ -127,6 +160,13 @@ void UpdateFoam(uint3 id : SV_DispatchThreadID)
 	// Determinant is < 1 for pinched, < 0 for overlap/inversion
 	const float det = determinant( jacobian );
 	foam += 5.0 * waveSourceWeight * _WaveFoamStrength * saturate( _WaveFoamCoverage - det + foamBase * 0.7 );
+
+	// Filtering the waves used for whitecaps must not change the shoreline's
+	// displaced sampling position or water depth. Reuse the sample at filter zero.
+	if (wavesSliceIndex > sliceIndex)
+	{
+		disp = SampleLod(_LD_TexArray_AnimatedWaves, uv_slice).xyz;
+	}
 
 	// Add foam in shallow water. use the displaced position to ensure we add foam where world objects are.
 	const float3 uv_slice_displaced = WorldToUV(worldPosXZ + disp.xz, cascadeData, sliceIndex);

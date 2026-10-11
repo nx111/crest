@@ -15,6 +15,17 @@ struct FoamWorldXZ
 	float2 undisplaced1;
 };
 
+half CrestWhiteFoamCoverage(half i_foam, half ft)
+{
+	// Black-point fade. Evaluate each cascade's coverage before blending, since
+	// thresholding a blend of two unrelated patterns can erase sparse foam in between.
+	i_foam = saturate(1. - i_foam);
+	// Resolve a subpixel foam edge over at least its pixel footprint. Preserve the
+	// lower threshold so a zero simulation value cannot create spurious whitecaps.
+	const float feather = max(max(_WaveFoamFeather, 0.001), fwidth(ft - i_foam));
+	return smoothstep(i_foam, i_foam + feather, ft);
+}
+
 half WhiteFoamTexture
 (
 	in const WaveHarmonic::Crest::TiledTexture i_texture,
@@ -30,19 +41,13 @@ half WhiteFoamTexture
 	// 25.0 magic number to match previous defaults.
 	const float scale = i_texture._scale * cascadeData0._scale / 25.0;
 
-	half ft = lerp
-	(
-		i_texture.Sample((1.25 * i_worldXZ.undisplaced0 + uvOffset) / scale).r,
-		i_texture.Sample((1.25 * i_worldXZ.undisplaced1 + uvOffset) / (scale * 2.0)).r,
-		lodVal
-	);
-
-	// black point fade
-	i_foam = saturate(1. - i_foam);
-	// Resolve a subpixel foam edge over at least its pixel footprint. Preserve the
-	// lower threshold so a zero simulation value cannot create spurious whitecaps.
-	const float feather = max(max(_WaveFoamFeather, 0.001), fwidth(ft - i_foam));
-	return smoothstep(i_foam, i_foam + feather, ft);
+	half ft0 = i_texture.Sample((1.25 * i_worldXZ.undisplaced0 + uvOffset) / scale).r;
+	half ft1 = i_texture.Sample((1.25 * i_worldXZ.undisplaced1 + uvOffset) / (scale * 2.0)).r;
+	// Both samples and their derivatives run for every pixel, including at either
+	// end of the LOD transition. Blend coverage, not the input to its threshold.
+	half coverage0 = CrestWhiteFoamCoverage(i_foam, ft0);
+	half coverage1 = CrestWhiteFoamCoverage(i_foam, ft1);
+	return lerp(coverage0, coverage1, lodVal);
 }
 
 float CrestBubbleFoamLod(float2 uv, float textureSize)
@@ -156,16 +161,32 @@ void ComputeFoam
 	// compute a foam normal
 	half dfdx = whiteFoam_x - whiteFoam, dfdz = whiteFoam_z - whiteFoam;
 	half3 fN = normalize(i_n + _WaveFoamNormalStrength * half3(-dfdx, 0., -dfdz));
-	// do simple NdL and phong lighting
-	half foamNdL = max(0., dot(fN, i_lightDir));
+	// Filter the actual foam normal, which includes its texture relief. This code
+	// runs before light-dependent branches and uses the existing specular AA controls.
+	float foamNormalVariance = CrestSpecularNormalVariance(fN);
+	// Do simple NdL and filtered Phong lighting. Match the local-light hemisphere
+	// gate so light behind the foam surface cannot produce a front-side highlight.
+	half foamNdL = saturate(dot(fN, i_lightDir));
 	o_whiteFoamCol.rgb = _FoamWhiteColor.rgb * (WaveHarmonic::Crest::AmbientLight() + _WaveFoamLightScale * _LightColor0 * foamNdL * i_shadow);
 	half3 refl = reflect(-i_view, fN);
-	o_whiteFoamCol.rgb += pow(max(0., dot(refl, i_lightDir)), _WaveFoamSpecularFallOff) * _WaveFoamSpecularBoost * _LightColor0 * i_shadow;
+	o_whiteFoamCol.rgb += CrestFilteredLightHighlight(dot(refl, i_lightDir), _WaveFoamSpecularFallOff, foamNormalVariance)
+		* _WaveFoamSpecularBoost * _LightColor0 * i_shadow * foamNdL;
 #else // _FOAM3DLIGHTING_ON
 	o_whiteFoamCol.rgb = _FoamWhiteColor.rgb * (WaveHarmonic::Crest::AmbientLight() + _WaveFoamLightScale * _LightColor0 * i_shadow);
 #endif // _FOAM3DLIGHTING_ON
 
 	o_whiteFoamCol.a = _FoamWhiteColor.a * whiteFoam;
+}
+
+half4 CrestBlendWhiteFoam(half4 first, half4 second, float firstWeight)
+{
+	// A flow phase with no foam must not tint the covered phase or lend it a
+	// highlight. Blend covered radiance, then return straight colour for the
+	// final water/foam composite. Float arithmetic protects very small coverage.
+	float2 coverageWeights = float2(firstWeight * first.a, (1.0 - firstWeight) * second.a);
+	float coverage = coverageWeights.x + coverageWeights.y;
+	float3 premultiplied = coverageWeights.x * first.rgb + coverageWeights.y * second.rgb;
+	return half4(premultiplied / max(coverage, 0.00000001), coverage);
 }
 
 void ComputeFoamWithFlow
@@ -207,7 +228,7 @@ void ComputeFoamWithFlow
 	ComputeFoam(i_texture, i_foam, i_worldXZ, i_worldXZUndisplaced, flow * sample1_offset, i_n, i_pixelZ, i_sceneZ, i_view, i_lightDir, i_shadow, lodVal, o_bubbleCol1, o_whiteFoamCol1, cascadeData0, cascadeData1);
 	ComputeFoam(i_texture, i_foam, i_worldXZ, i_worldXZUndisplaced, flow * sample2_offset, i_n, i_pixelZ, i_sceneZ, i_view, i_lightDir, i_shadow, lodVal, o_bubbleCol2, o_whiteFoamCol2, cascadeData0, cascadeData1);
 	o_bubbleCol = (sample1_weight * o_bubbleCol1) + (sample2_weight * o_bubbleCol2);
-	o_whiteFoamCol = (sample1_weight * o_whiteFoamCol1) + (sample2_weight * o_whiteFoamCol2);
+	o_whiteFoamCol = CrestBlendWhiteFoam(o_whiteFoamCol1, o_whiteFoamCol2, sample1_weight);
 }
 
 #endif // _FOAM_ON

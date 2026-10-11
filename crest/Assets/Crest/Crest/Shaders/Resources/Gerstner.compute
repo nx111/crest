@@ -42,15 +42,16 @@ RWTexture2DArray<float4> _WaveBuffer;
 
 void ComputeGerstner( float2 worldPosXZ, float worldSize, GerstnerWaveComponent4 data, inout float3 result )
 {
-	// direction
-	half4 Dx = data._waveDirX;
-	half4 Dz = data._waveDirZ;
+	// Keep the wave vector in float: rounding it to half breaks the integer
+	// periods chosen by the CPU for seamless repetition across this cascade.
+	float4 Dx = data._waveDirX;
+	float4 Dz = data._waveDirZ;
 
 	// wave number
-	half4 k = data._twoPiOverWavelength;
+	float4 k = data._twoPiOverWavelength;
 
-	half4 kx = k * Dx;
-	half4 kz = k * Dz;
+	float4 kx = k * Dx;
+	float4 kz = k * Dz;
 
 	// spatial location
 	float4 x = kx * worldPosXZ.x + kz * worldPosXZ.y;
@@ -61,9 +62,11 @@ void ComputeGerstner( float2 worldPosXZ, float worldSize, GerstnerWaveComponent4
 	// a more dynamic surface appearance.
 	half4 resultx, resulty, resultz;
 	{
-		half4 angle = x + data._phase - data._omega * _CrestTime;
+		// A half angle loses sub-frame motion as time grows and can overflow.
+		// Only the bounded trigonometric result/displacement may lose precision.
+		float4 angle = x + data._phase - data._omega * _CrestTime;
 
-		half4 sinangle, cosangle;
+		float4 sinangle, cosangle;
 		sincos( angle, sinangle, cosangle );
 
 		half4 disp = data._chopAmp * sinangle;
@@ -74,9 +77,9 @@ void ComputeGerstner( float2 worldPosXZ, float worldSize, GerstnerWaveComponent4
 	}
 
 	{
-		half4 angle = x + data._phase2 + data._omega * _CrestTime;
+		float4 angle = x + data._phase2 + data._omega * _CrestTime;
 
-		half4 sinangle, cosangle;
+		float4 sinangle, cosangle;
 		sincos( angle, sinangle, cosangle );
 
 		half4 disp = data._chopAmp2 * sinangle;

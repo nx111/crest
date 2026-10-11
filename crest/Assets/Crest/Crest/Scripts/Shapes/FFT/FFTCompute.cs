@@ -411,9 +411,15 @@ namespace Crest
             // Always set _Size as the compute shader returned from Resource.Load is the same asset every time and more
             // than one ShapeFFT will overwrite this value.
             buf.SetComputeIntParam(_shaderSpectrum, ShaderIDs.s_Size, _resolution);
-            buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Time, time * _spectrum._gravityScale);
+            var timeScale = _spectrum._gravityScale;
+            buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Time, time * timeScale);
             buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Chop, _spectrum._chop);
-            buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Period, _loopPeriod);
+            // The bake and CPU queries loop in unscaled time. Quantize in the
+            // same scaled-time domain used by the shader so fractional time
+            // scales also close at the requested period. Zero freezes the
+            // phase; a negative scale supplied by script reverses propagation.
+            var scaledPeriod = _loopPeriod > 0f ? _loopPeriod * Mathf.Abs(timeScale) : _loopPeriod;
+            buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Period, scaledPeriod);
             buf.SetComputeTextureParam(_shaderSpectrum, _kernelSpectrumUpdate, ShaderIDs.s_Init0, _spectrumInit);
             buf.SetComputeTextureParam(_shaderSpectrum, _kernelSpectrumUpdate, ShaderIDs.s_ResultHeight, _spectrumHeight);
             buf.SetComputeTextureParam(_shaderSpectrum, _kernelSpectrumUpdate, ShaderIDs.s_ResultDisplaceX, _spectrumDisplaceX);

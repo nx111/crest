@@ -13,11 +13,12 @@ half _Weight;
 half _AttenuationInShallows;
 uint _NumWaveVecs;
 
-half4 _TwoPiOverWavelengths[BATCH_SIZE / 4];
+// Phase inputs need float even when displacement storage uses half.
+float4 _TwoPiOverWavelengths[BATCH_SIZE / 4];
 half4 _Amplitudes[BATCH_SIZE / 4];
-half4 _WaveDirX[BATCH_SIZE / 4];
-half4 _WaveDirZ[BATCH_SIZE / 4];
-half4 _Phases[BATCH_SIZE / 4];
+float4 _WaveDirX[BATCH_SIZE / 4];
+float4 _WaveDirZ[BATCH_SIZE / 4];
+float4 _Phases[BATCH_SIZE / 4];
 half4 _ChopAmps[BATCH_SIZE / 4];
 
 float4 _TargetPointData;
@@ -56,8 +57,8 @@ half3 ComputeGerstner(float2 worldPosXZ, float3 uv_slice)
 	for (uint vi = 0; vi < _NumWaveVecs; vi++)
 	{
 		// direction
-		half4 Dx = _WaveDirX[vi];
-		half4 Dz = _WaveDirZ[vi];
+		float4 Dx = _WaveDirX[vi];
+		float4 Dz = _WaveDirZ[vi];
 
 		// Peferred wave direction
 #if CREST_DIRECT_TOWARDS_POINT_INTERNAL
@@ -65,10 +66,10 @@ half3 ComputeGerstner(float2 worldPosXZ, float3 uv_slice)
 #endif
 
 		// wave number
-		half4 k = _TwoPiOverWavelengths[vi];
+		float4 k = _TwoPiOverWavelengths[vi];
 		// spatial location
 		float4 x = Dx * worldPosXZ.x + Dz * worldPosXZ.y;
-		half4 angle = k * x + _Phases[vi];
+		float4 angle = k * x + _Phases[vi];
 
 		// dx and dz could be baked into _ChopAmps
 		half4 disp = _ChopAmps[vi] * sin(angle);
