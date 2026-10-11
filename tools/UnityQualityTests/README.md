@@ -3,9 +3,13 @@
 `QualityRunner.cs` exercises the actual ocean shaders, Render Graph passes and
 camera rendering on a GPU. It targets Unity **6000.6.2f1 / URP 17.6.0**, the pinned
 versions of the example project. Earlier GPU results recorded on 2026-10-11 are
-in [URP-QUALITY-AUDIT.md](../../docs/URP-QUALITY-AUDIT.md). Those results predate
-the specular AA diagnostic and the subsequent water quality changes; rerun this
-tool on the current revision to validate those changes.
+in [URP-QUALITY-AUDIT.md](../../docs/URP-QUALITY-AUDIT.md).
+User-supplied tests of `90a93293` subsequently covered 322 Editor assertions and
+Windows D3D11/D3D12 and Android Vulkan Players; see the
+[runtime follow-up](../../docs/URP-RUNTIME-FOLLOWUP.md) for evidence and limits.
+The supplied expanded Editor/Player test sources are not yet in this repository,
+so this smaller runner does not reproduce all of those cases. The latest query
+lifecycle and runner startup fixes still require a new Unity/device run.
 
 The planar reflection, normal sampling, depth-cache and underwater Fresnel
 changes also need the [additional manual visual/performance checks](../../docs/URP-REFLECTIONS-AND-SHALLOW-WATER.md#6-本地画面与性能验收).
@@ -98,8 +102,9 @@ shader name. It does not replace Crest runtime scripts or scene assets.
   wave geometry is shared, and the comparison isolates common flat-normal lighting.
   Its mean RGB difference threshold remains **0.015**; the material's variance and
   normal strength are restored after comparison. This does not establish visual
-  equivalence of the intentionally changed normal models. The revised comparison
-  has not yet been run on a GPU; earlier captures belong to the recorded baseline.
+  equivalence of the intentionally changed normal models. The user-supplied
+  `90a93293` Editor report records delta 0 for this flat-normal comparison; that
+  result does not cover later changes or the appearance of RNM on steep waves.
 
 ## Specular AA diagnostic
 
@@ -127,11 +132,23 @@ Image differences use linear RGB readback from a 960 × 540 ARGBHalf target:
 `mean(abs(deltaR) + abs(deltaG) + abs(deltaB))` over all pixels. Saved PNGs are
 gamma-converted previews; assertions use the floating-point readback.
 
-The runner reports Unity Search indexing exceptions separately as `EDITOR`
-notes when their stack is in `UnityEditor.Search.SearchDatabase`. Actual runtime,
-shader and Render Graph errors remain fatal. The earlier recorded final run had
-one such indexing note and no rendering errors; this does not describe a new
-run of the checks added since that recording.
+The runner calls `SearchService.IsIndexReady(null)` in Edit Mode before entering
+Play Mode to trigger default-index initialization on the pinned Unity version.
+A false return value is diagnostic, not a failure or a requirement to wait for
+the entire asynchronous index build. Log collection starts before pipeline and
+scene initialization. Error, Exception and Assert messages are fatal regardless
+of their source, including Unity Search; errors and stacks are preserved in
+`SessionState` across Play Mode domain reload. Initialization exceptions also
+write a failed result and exit with code 1.
+
+The older recorded run excluded one Search error as an `EDITOR` note. That was
+the old runner's behavior and is no longer its acceptance rule. Retest the new
+startup handling in a disposable project with `UserSettings/Search.index` moved
+to a backup name, and verify an injected Search error remains fatal across reload.
+Keep checking the entire Editor/Player process log from the host: errors before
+`Start`, during an unobserved reload interval, or at shutdown are outside the
+managed listener's complete coverage. In particular, the supplied Android log
+has a startup Java class error even though its managed rendering checks pass.
 
 These checks do not establish full Built-in visual equivalence, all shader
 variants, player stripping, performance budgets, volume/stencil edge quality,

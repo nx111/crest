@@ -49,7 +49,9 @@ namespace Crest
         public const int MAX_QUERY_COUNT_DEFAULT = 4096;
 
         int _maxQueryCount = MAX_QUERY_COUNT_DEFAULT;
-        Vector3[] _queryPosXZ_minGridSize = new Vector3[MAX_QUERY_COUNT_DEFAULT];
+        Vector3[] _queryPosXZ_minGridSize;
+        Vector3[] _queryPosScratch;
+        bool _disposed;
 
         /// <summary>
         /// Holds information about all query points. Maps from unique hash code to position in point array.
@@ -57,154 +59,83 @@ namespace Crest
         class SegmentRegistrar
         {
             // Map from guids to (segment start index, segment end index, frame number when query was made)
-            public Dictionary<int, Vector3Int> _segments = new Dictionary<int, Vector3Int>();
+            public readonly Dictionary<int, Vector3Int> _segments = new Dictionary<int, Vector3Int>();
             public int _numQueries = 0;
+            public bool _inUse;
         }
 
         /// <summary>
-        /// Since query results return asynchronously and may not return at all (in theory), we keep a ringbuffer
-        /// of the registrars of the last frames so that when data does come back it can be interpreted correctly.
+        /// A registrar is owned by the current batch, an in-flight request, or one of the two retained results.
+        /// Completion can be out of order, so release the exact registrar rather than advancing a ring cursor.
         /// </summary>
-        class SegmentRegistrarRingBuffer
+        class SegmentRegistrarPool
         {
             // Requests in flight plus 2 held values, plus one current
             readonly static int s_poolSize = s_maxRequests + 2 + 1;
 
-            SegmentRegistrar[] _segments = new SegmentRegistrar[s_poolSize];
+            readonly SegmentRegistrar[] _segments = new SegmentRegistrar[s_poolSize];
 
-            public int _segmentRelease = 0;
-            public int _segmentAcquire = 0;
+            public SegmentRegistrar Current { get; set; }
 
-            public SegmentRegistrar Current => _segments[_segmentAcquire];
-
-            public SegmentRegistrarRingBuffer()
+            public SegmentRegistrarPool()
             {
                 for (int i = 0; i < _segments.Length; i++)
                 {
                     _segments[i] = new SegmentRegistrar();
                 }
+
+                Current = Acquire();
             }
 
-            public void AcquireNew()
-            {
-                var lastIndex = _segmentAcquire;
-
-                {
-                    var newSegmentAcquire = (_segmentAcquire + 1) % _segments.Length;
-
-                    if (newSegmentAcquire == _segmentRelease)
-                    {
-                        // The last index has incremented and landed on the first index. This shouldn't happen normally, but
-                        // can happen if the Scene and Game view are not visible, in which case async readbacks dont get processed
-                        // and the pipeline blocks up.
-#if !UNITY_EDITOR
-                        Debug.LogError("Crest: Query ring buffer exhausted. Please report this to developers.");
-#endif
-                        return;
-                    }
-
-                    _segmentAcquire = newSegmentAcquire;
-                }
-
-                // Copy the registrations across from the previous frame. This makes queries persistent. This is needed because
-                // queries are often made from FixedUpdate(), and at high framerates this may not be called, which would mean
-                // the query would get lost and this leads to stuttering and other artifacts.
-                {
-                    _segments[_segmentAcquire]._numQueries = 0;
-                    _segments[_segmentAcquire]._segments.Clear();
-
-                    foreach (var segment in _segments[lastIndex]._segments)
-                    {
-                        var age = Time.frameCount - segment.Value.z;
-
-                        // Don't keep queries around if they have not be active in the last 10 frames
-                        if (age < 10)
-                        {
-                            // Compute a new segment range - we may have removed some segments that were too old, so this ensures
-                            // we have a nice compact array of queries each frame rather than accumulating persistent air bubbles
-                            var newSegment = segment.Value;
-                            newSegment.x = _segments[_segmentAcquire]._numQueries;
-                            newSegment.y = newSegment.x + (segment.Value.y - segment.Value.x);
-                            _segments[_segmentAcquire]._numQueries = newSegment.y + 1;
-
-                            _segments[_segmentAcquire]._segments.Add(segment.Key, newSegment);
-                        }
-                    }
-                }
-            }
-
-            public void ReleaseLast()
-            {
-                _segmentRelease = (_segmentRelease + 1) % _segments.Length;
-            }
-
-            public void RemoveRegistrations(int key)
-            {
-                // Remove the guid for all of the next spare segment registrars. However, don't touch the ones that are being
-                // used for active requests.
-                int i = _segmentAcquire;
-                while (true)
-                {
-                    if (_segments[i]._segments.ContainsKey(key))
-                    {
-                        _segments[i]._segments.Remove(key);
-                    }
-
-                    i = (i + 1) % _segments.Length;
-
-                    if (i == _segmentRelease)
-                    {
-                        break;
-                    }
-                }
-            }
-
-            public void ClearAvailable()
-            {
-                // Extreme approach - flush all segments for next spare registrars (but don't touch ones being used for active requests)
-                int i = _segmentAcquire;
-                while (true)
-                {
-                    _segments[i]._segments.Clear();
-                    _segments[i]._numQueries = 0;
-
-                    i = (i + 1) % _segments.Length;
-
-                    if (i == _segmentRelease)
-                    {
-                        break;
-                    }
-                }
-            }
-
-            public void ClearAll()
+            public SegmentRegistrar Acquire()
             {
                 for (int i = 0; i < _segments.Length; i++)
                 {
-                    _segments[i]._numQueries = 0;
-                    _segments[i]._segments.Clear();
+                    if (!_segments[i]._inUse)
+                    {
+                        _segments[i]._inUse = true;
+                        return _segments[i];
+                    }
+                }
+
+                return null;
+            }
+
+            public void Release(SegmentRegistrar registrar)
+            {
+                if (registrar != null)
+                {
+                    Debug.Assert(registrar._inUse);
+                    registrar._segments.Clear();
+                    registrar._numQueries = 0;
+                    registrar._inUse = false;
                 }
             }
         }
 
-        SegmentRegistrarRingBuffer _segmentRegistrarRingBuffer = new SegmentRegistrarRingBuffer();
+        readonly SegmentRegistrarPool _segmentRegistrarPool = new SegmentRegistrarPool();
 
         NativeArray<Vector3> _queryResults;
         float _queryResultsTime = -1f;
-        Dictionary<int, Vector3Int> _resultSegments;
+        SegmentRegistrar _resultRegistrar;
+        Dictionary<int, Vector3Int> _resultSegments => _resultRegistrar?._segments;
 
         NativeArray<Vector3> _queryResultsLast;
         float _queryResultsTimeLast = -1f;
-        Dictionary<int, Vector3Int> _resultSegmentsLast;
+        SegmentRegistrar _resultRegistrarLast;
+        Dictionary<int, Vector3Int> _resultSegmentsLast => _resultRegistrarLast?._segments;
+        long _nextRequestSequence;
+        long _queryResultsSequence;
 
         struct ReadbackRequest
         {
             public AsyncGPUReadbackRequest _request;
             public float _dataTimestamp;
-            public Dictionary<int, Vector3Int> _segments;
+            public SegmentRegistrar _registrar;
+            public long _sequence;
         }
 
-        List<ReadbackRequest> _requests = new List<ReadbackRequest>();
+        readonly List<ReadbackRequest> _requests = new List<ReadbackRequest>(s_maxRequests);
 
         public enum QueryStatus
         {
@@ -220,11 +151,9 @@ namespace Crest
         {
             _dataArrivedAction = new System.Action<AsyncGPUReadbackRequest>(DataArrived);
 
-            if (_maxQueryCount != OceanRenderer.Instance._lodDataAnimWaves.Settings.MaxQueryCount)
-            {
-                _maxQueryCount = OceanRenderer.Instance._lodDataAnimWaves.Settings.MaxQueryCount;
-                _queryPosXZ_minGridSize = new Vector3[_maxQueryCount];
-            }
+            _maxQueryCount = OceanRenderer.Instance._lodDataAnimWaves.Settings.MaxQueryCount;
+            _queryPosXZ_minGridSize = new Vector3[_maxQueryCount];
+            _queryPosScratch = new Vector3[_maxQueryCount];
 
             _computeBufQueries = new ComputeBuffer(_maxQueryCount, 12, ComputeBufferType.Default);
             _computeBufResults = new ComputeBuffer(_maxQueryCount, 12, ComputeBufferType.Default);
@@ -250,35 +179,15 @@ namespace Crest
         /// </summary>
         protected bool UpdateQueryPoints(int i_ownerHash, float i_minSpatialLength, Vector3[] queryPoints, Vector3[] queryNormals)
         {
-            if (queryPoints.Length + _segmentRegistrarRingBuffer.Current._numQueries > _maxQueryCount)
+            if (_disposed)
             {
-                Debug.LogError($"Crest: Max query count ({_maxQueryCount}) exceeded, increase the max query count in the Animated Waves Settings to support a higher number of queries.");
                 return false;
             }
-
-            var segmentRetrieved = false;
 
             // We'll send in 3 points to get normals
             var countPts = (queryPoints != null ? queryPoints.Length : 0);
             var countNorms = (queryNormals != null ? queryNormals.Length : 0);
-            var countTotal = countPts + countNorms * 3;
-
-            if (_segmentRegistrarRingBuffer.Current._segments.TryGetValue(i_ownerHash, out var segment))
-            {
-                var segmentSize = segment.y - segment.x + 1;
-                if (segmentSize == countTotal)
-                {
-                    // Update frame count
-                    segment.z = Time.frameCount;
-                    _segmentRegistrarRingBuffer.Current._segments[i_ownerHash] = segment;
-
-                    segmentRetrieved = true;
-                }
-                else
-                {
-                    _segmentRegistrarRingBuffer.Current._segments.Remove(i_ownerHash);
-                }
-            }
+            var countTotal = (long)countPts + (long)countNorms * 3;
 
             if (countTotal == 0)
             {
@@ -286,35 +195,39 @@ namespace Crest
                 return false;
             }
 
-            if (!segmentRetrieved)
+            var registrar = _segmentRegistrarPool.Current;
+            var hasSegment = registrar._segments.TryGetValue(i_ownerHash, out var segment);
+            var reuseSegment = hasSegment && segment.y - segment.x + 1 == countTotal;
+
+            // Check all points, including the three samples per normal, before changing the registration.
+            // Updating an existing range needs no additional space, even when the buffer is full.
+            if (!reuseSegment && countTotal > _maxQueryCount - registrar._numQueries)
             {
-                if (_segmentRegistrarRingBuffer.Current._segments.Count >= s_maxGuids)
+                Debug.LogError($"Crest: Max query count ({_maxQueryCount}) exceeded, increase the max query count in the Animated Waves Settings to support a higher number of queries.");
+                return false;
+            }
+
+            if (!reuseSegment)
+            {
+                if (!hasSegment && registrar._segments.Count >= s_maxGuids)
                 {
                     Debug.LogError("Crest: Too many guids registered with CollProviderCompute. Increase s_maxGuids.");
                     return false;
                 }
 
-                segment.x = _segmentRegistrarRingBuffer.Current._numQueries;
-                segment.y = segment.x + countTotal - 1;
-                segment.z = Time.frameCount;
-                _segmentRegistrarRingBuffer.Current._segments.Add(i_ownerHash, segment);
-
-                _segmentRegistrarRingBuffer.Current._numQueries += countTotal;
-
-                //Debug.Log("Crest: Added points for " + guid);
+                segment.x = registrar._numQueries;
+                segment.y = segment.x + (int)countTotal - 1;
+                registrar._numQueries += (int)countTotal;
             }
+
+            segment.z = Time.frameCount;
+            registrar._segments[i_ownerHash] = segment;
 
             // The smallest wavelengths should repeat no more than twice across the smaller spatial length. Unless we're
             // in the last LOD - then this is the best we can do.
             float minWavelength = i_minSpatialLength / 2f;
             float samplesPerWave = 2f;
             float minGridSize = minWavelength / samplesPerWave;
-
-            if (countPts + segment.x > _queryPosXZ_minGridSize.Length)
-            {
-                Debug.LogError("Crest: Too many wave height queries. Increase Max Query Count in the Animated Waves Settings.");
-                return false;
-            }
 
             for (int pointi = 0; pointi < countPts; pointi++)
             {
@@ -349,7 +262,10 @@ namespace Crest
         /// </summary>
         public void RemoveQueryPoints(int guid)
         {
-            _segmentRegistrarRingBuffer.RemoveRegistrations(guid);
+            if (!_disposed)
+            {
+                _segmentRegistrarPool.Current._segments.Remove(guid);
+            }
         }
 
         /// <summary>
@@ -358,7 +274,11 @@ namespace Crest
         /// </summary>
         public void CompactQueryStorage()
         {
-            _segmentRegistrarRingBuffer.ClearAvailable();
+            if (!_disposed)
+            {
+                _segmentRegistrarPool.Current._segments.Clear();
+                _segmentRegistrarPool.Current._numQueries = 0;
+            }
         }
 
         /// <summary>
@@ -381,8 +301,15 @@ namespace Crest
             var countPoints = 0;
             if (displacements != null) countPoints = displacements.Length;
             if (heights != null) countPoints = heights.Length;
-            if (displacements != null && heights != null) Debug.Assert(displacements.Length == heights.Length);
             var countNorms = (normals != null ? normals.Length : 0);
+
+            // A caller may resize its query before the new readback arrives. Never read another owner's range
+            // or partially overwrite outputs on failure. Partial/optional outputs remain supported.
+            if ((displacements != null && heights != null && displacements.Length != heights.Length)
+                || !HasResultRange(segment, _queryResults.Length, (long)countPoints + (long)countNorms * 3))
+            {
+                return false;
+            }
 
             if (countPoints > 0)
             {
@@ -420,6 +347,12 @@ namespace Crest
             return true;
         }
 
+        static bool HasResultRange(Vector3Int segment, int resultCount, long requestedCount)
+        {
+            return segment.x >= 0 && segment.y >= segment.x && segment.y < resultCount
+                && requestedCount <= (long)segment.y - segment.x + 1;
+        }
+
         /// <summary>
         /// Compute time derivative of the displacements by calculating difference from last query. More complicated than it would seem - results
         /// may not be available in one or both of the results, or the query locations in the array may change.
@@ -442,9 +375,11 @@ namespace Crest
                 return (int)QueryStatus.NotEnoughDataForVels;
             }
 
-            if ((segment.y - segment.x) != (segmentLast.y - segmentLast.x))
+            if ((segment.y - segment.x) != (segmentLast.y - segmentLast.x)
+                || !HasResultRange(segment, _queryResults.Length, results.Length)
+                || !HasResultRange(segmentLast, _queryResultsLast.Length, results.Length))
             {
-                // Number of queries changed - can't handle that
+                // Number of queries changed, or the caller is asking beyond a retained range.
                 return (int)QueryStatus.VelocityDataInvalidated;
             }
 
@@ -465,33 +400,83 @@ namespace Crest
 
         public void UpdateQueries()
         {
-            if (_segmentRegistrarRingBuffer.Current._numQueries > 0)
+            ProcessCompletedRequests();
+
+            // Keep every in-flight request accounted for. When readbacks stall, retain the latest query positions
+            // and the last valid results instead of dispatching more GPU work or reusing an active registrar.
+            if (_disposed || _requests.Count >= s_maxRequests || _segmentRegistrarPool.Current._numQueries == 0)
             {
+                return;
+            }
+
+            // Reserve space before dispatch. With the request limit and two retained results, a slot must be free.
+            var nextRegistrar = _segmentRegistrarPool.Acquire();
+            if (nextRegistrar == null)
+            {
+                Debug.LogError("Crest: Query registrar pool has no free slot.");
+                return;
+            }
+
+            var submitted = false;
+            try
+            {
+                PrepareNextBatch(nextRegistrar);
+
+                // Dispatch still uses the original registrar and coordinates. Only switch the writable batch after
+                // its readback is tracked, so exceptions cannot expose a submitted mapping to later query writes.
                 ExecuteQueries();
 
-                // Remove oldest requests if we have hit the limit
-                while (_requests.Count >= s_maxRequests)
+                var request = new ReadbackRequest
                 {
-                    _requests.RemoveAt(0);
-                }
-
-                ReadbackRequest request;
-                request._dataTimestamp = Time.time;
-                request._request = AsyncGPUReadback.Request(_computeBufResults, _dataArrivedAction);
-                request._segments = _segmentRegistrarRingBuffer.Current._segments;
+                    _dataTimestamp = Time.time,
+                    _registrar = _segmentRegistrarPool.Current,
+                    _sequence = ++_nextRequestSequence,
+                    _request = AsyncGPUReadback.Request(_computeBufResults, _dataArrivedAction),
+                };
                 _requests.Add(request);
 
-                _segmentRegistrarRingBuffer.AcquireNew();
+                _segmentRegistrarPool.Current = nextRegistrar;
+                Helpers.Swap(ref _queryPosXZ_minGridSize, ref _queryPosScratch);
+                submitted = true;
+            }
+            finally
+            {
+                if (!submitted)
+                {
+                    _segmentRegistrarPool.Release(nextRegistrar);
+                }
+            }
+
+            // A request may already have failed, or its callback may have run before Request returned.
+            ProcessCompletedRequests();
+        }
+
+        void PrepareNextBatch(SegmentRegistrar nextRegistrar)
+        {
+            // FixedUpdate may not run on every rendered frame. Keep recent queries, and move their positions with
+            // their ranges. A separate array avoids overwriting unread ranges when dictionary order changes.
+            foreach (var segment in _segmentRegistrarPool.Current._segments)
+            {
+                if (Time.frameCount - segment.Value.z < 10)
+                {
+                    var newSegment = segment.Value;
+                    var count = newSegment.y - newSegment.x + 1;
+                    newSegment.x = nextRegistrar._numQueries;
+                    newSegment.y = newSegment.x + count - 1;
+                    System.Array.Copy(_queryPosXZ_minGridSize, segment.Value.x, _queryPosScratch, newSegment.x, count);
+                    nextRegistrar._segments.Add(segment.Key, newSegment);
+                    nextRegistrar._numQueries += count;
+                }
             }
         }
 
         void ExecuteQueries()
         {
-            _computeBufQueries.SetData(_queryPosXZ_minGridSize, 0, 0, _segmentRegistrarRingBuffer.Current._numQueries);
+            _computeBufQueries.SetData(_queryPosXZ_minGridSize, 0, 0, _segmentRegistrarPool.Current._numQueries);
             _shaderProcessQueries.SetBuffer(_kernelHandle, sp_queryPositions_minGridSizes, _computeBufQueries);
             BindInputsAndOutputs(_wrapper, _computeBufResults);
 
-            var numGroups = (_segmentRegistrarRingBuffer.Current._numQueries + s_computeGroupSize - 1) / s_computeGroupSize;
+            var numGroups = (_segmentRegistrarPool.Current._numQueries + s_computeGroupSize - 1) / s_computeGroupSize;
             _shaderProcessQueries.Dispatch(_kernelHandle, numGroups, 1, 1);
         }
 
@@ -500,61 +485,91 @@ namespace Crest
         /// </summary>
         void DataArrived(AsyncGPUReadbackRequest req)
         {
-            // Can get callbacks after disable, so detect this.
-            if (!_queryResults.IsCreated)
-            {
-                _requests.Clear();
-                return;
-            }
+            ProcessCompletedRequests();
+        }
 
-            // Remove any error requests
-            for (int i = _requests.Count - 1; i >= 0; --i)
+        void ProcessCompletedRequests()
+        {
+            var newestIndex = -1;
+            var newestSequence = _queryResultsSequence;
+            if (!_disposed)
             {
-                if (_requests[i]._request.hasError)
+                for (int i = 0; i < _requests.Count; i++)
                 {
-                    _requests.RemoveAt(i);
-                    _segmentRegistrarRingBuffer.ReleaseLast();
+                    var request = _requests[i];
+                    if (request._request.done && !request._request.hasError && request._sequence > newestSequence)
+                    {
+                        newestIndex = i;
+                        newestSequence = request._sequence;
+                    }
                 }
             }
 
-            // Find the last request that was completed
-            var lastDoneIndex = _requests.Count - 1;
-            while (lastDoneIndex >= 0 && !_requests[lastDoneIndex]._request.done)
+            if (newestIndex >= 0)
             {
-                --lastDoneIndex;
-            }
+                var request = _requests[newestIndex];
+                // Unity owns request data for only one frame. Copy it into our persistent storage immediately.
+                var data = request._request.GetData<Vector3>();
+                data.CopyTo(_queryResultsLast);
 
-            // If there is a completed request, process it
-            if (lastDoneIndex >= 0)
-            {
-                // Update "last" results
                 Helpers.Swap(ref _queryResults, ref _queryResultsLast);
+                _segmentRegistrarPool.Release(_resultRegistrarLast);
                 _queryResultsTimeLast = _queryResultsTime;
-                _resultSegmentsLast = _resultSegments;
-
-                var data = _requests[lastDoneIndex]._request.GetData<Vector3>();
-                data.CopyTo(_queryResults);
-                _queryResultsTime = _requests[lastDoneIndex]._dataTimestamp;
-                _resultSegments = _requests[lastDoneIndex]._segments;
+                _resultRegistrarLast = _resultRegistrar;
+                _queryResultsTime = request._dataTimestamp;
+                _resultRegistrar = request._registrar;
+                _queryResultsSequence = newestSequence;
             }
 
-            // Remove all the requests up to the last completed one
-            for (int i = lastDoneIndex; i >= 0; --i)
+            for (int i = _requests.Count - 1; i >= 0; --i)
             {
-                _requests.RemoveAt(i);
-                _segmentRegistrarRingBuffer.ReleaseLast();
+                var request = _requests[i];
+                if (request._request.done || request._request.hasError)
+                {
+                    // The selected result takes ownership of its registrar. Errors and stale completed results
+                    // release only their own slots; older requests which are still pending remain counted.
+                    if (i != newestIndex)
+                    {
+                        _segmentRegistrarPool.Release(request._registrar);
+                    }
+                    _requests.RemoveAt(i);
+                }
+            }
+
+            if (_disposed && _requests.Count == 0)
+            {
+                DisposeBuffers();
             }
         }
 
         public void CleanUp()
         {
-            _computeBufQueries.Dispose();
-            _computeBufResults.Dispose();
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
 
             _queryResults.Dispose();
             _queryResultsLast.Dispose();
+            _queryResultsTime = _queryResultsTimeLast = -1f;
 
-            _segmentRegistrarRingBuffer.ClearAll();
+            _segmentRegistrarPool.Release(_segmentRegistrarPool.Current);
+            _segmentRegistrarPool.Current = null;
+            _segmentRegistrarPool.Release(_resultRegistrar);
+            _segmentRegistrarPool.Release(_resultRegistrarLast);
+            _resultRegistrar = _resultRegistrarLast = null;
+
+            // Late callbacks must not access the disposed CPU results. Keep the GPU source buffers alive until
+            // this instance's outstanding requests finish; no global wait or new work is needed during teardown.
+            ProcessCompletedRequests();
+        }
+
+        void DisposeBuffers()
+        {
+            _computeBufQueries?.Dispose();
+            _computeBufResults?.Dispose();
+            _computeBufQueries = _computeBufResults = null;
         }
 
         public int Query(int i_ownerHash, float i_minSpatialLength, Vector3[] i_queryPoints, Vector3[] o_resultDisps, Vector3[] o_resultNorms, Vector3[] o_resultVels)

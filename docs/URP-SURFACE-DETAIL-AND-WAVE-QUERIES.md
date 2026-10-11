@@ -14,6 +14,12 @@
 历史 D3D11 画面记录属于 `2aaeec77`，不能作为之后四批修改的视觉验收。下面的数值
 来自源码表达式与独立数学参考的 CPU 检查；画面改善是依据已定位机制推导的预期。
 
+**后续实机补充：**用户随后提供了本轮交付 `90a93293` 的 Unity Editor、Windows
+D3D11/D3D12 和 Android Vulkan 日志及截图，213 个生产文件的 SHA256 与该提交
+全部匹配。[实机回归跟进](URP-RUNTIME-FOLLOWUP.md)记录新增证据、查询积压修复、
+RHalf 精度和移动帧时问题。上面的“没有运行”描述的是本轮最初交付时的验证状态；
+后续实测也不替代新的生命周期修复所需的设备回归。
+
 ## 1. 细节法线随浪面方向旋转
 
 实现：[OceanNormalMapping.hlsl](../crest/Assets/Crest/Crest/Shaders/OceanNormalMapping.hlsl)、

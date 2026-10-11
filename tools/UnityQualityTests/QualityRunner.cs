@@ -17,11 +17,13 @@ using Object = UnityEngine.Object;
 public static class QualityRunner
 {
     const string Running = "CrestQualityRunning";
+    const string FailureLog = "CrestQualityFailureLog";
     const string SpecularAA = "CrestQualitySpecularAA";
     const string Main = "Assets/Crest/Crest-Examples/Main/Scenes/main.unity";
     static readonly string Output = Path.Combine(Path.GetDirectoryName(Application.dataPath), "QualityCaptures");
     static readonly List<string> Results = new List<string>();
-    static readonly List<string> Errors = new List<string>();
+    // Entering Play Mode reloads static fields. Preserve initialization errors across that reload.
+    static string Errors => SessionState.GetString(FailureLog, string.Empty);
     static IEnumerator _routine;
     static int _frame = -1;
     static Camera _camera;
@@ -33,37 +35,71 @@ public static class QualityRunner
 
     static QualityRunner()
     {
-        EditorApplication.playModeStateChanged += state =>
+        if (SessionState.GetBool(Running, false)) ListenForLogs();
+        EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+    }
+
+    static void ListenForLogs()
+    {
+        Application.logMessageReceived -= Log;
+        Application.logMessageReceived += Log;
+    }
+
+    static void OnPlayModeStateChanged(PlayModeStateChange state)
+    {
+        if (state == PlayModeStateChange.EnteredPlayMode && SessionState.GetBool(Running, false))
         {
-            if (state == PlayModeStateChange.EnteredPlayMode && SessionState.GetBool(Running, false))
+            try
             {
                 Application.runInBackground = true;
                 ShaderUtil.allowAsyncCompilation = false;
-                Directory.CreateDirectory(Output);
-                Application.logMessageReceived += Log;
+                ListenForLogs();
                 _routine = Run();
+                EditorApplication.update -= Tick;
                 EditorApplication.update += Tick;
             }
-        };
+            catch (Exception exception)
+            {
+                Fail(exception);
+            }
+        }
     }
 
     public static void Start()
     {
-        CrestURPSetup.ValidatePipeline();
-        SessionState.SetBool(Running, true);
-        SessionState.SetBool(SpecularAA, Environment.GetCommandLineArgs().Contains("-crestSpecularAA"));
-        EditorSceneManager.OpenScene(Main);
-        EditorApplication.EnterPlaymode();
+        try
+        {
+            Results.Clear();
+            SessionState.SetString(FailureLog, string.Empty);
+            SessionState.SetBool(Running, true);
+            ListenForLogs();
+            EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            Directory.CreateDirectory(Output);
+            CrestURPSetup.ValidatePipeline();
+            SessionState.SetBool(SpecularAA, Environment.GetCommandLineArgs().Contains("-crestSpecularAA"));
+            EditorSceneManager.OpenScene(Main);
+            // Unity 6000.6: initialize the default Search database while still in Edit Mode.
+            // The index may still build asynchronously. A false readiness result is diagnostic only.
+            bool indexReady = UnityEditor.Search.SearchService.IsIndexReady(null);
+            Debug.Log("Crest quality: search database initialized before Play Mode; index ready=" + indexReady);
+            Check(string.IsNullOrEmpty(Errors), "No initialization errors: " + Errors);
+            EditorApplication.EnterPlaymode();
+        }
+        catch (Exception exception)
+        {
+            Fail(exception);
+        }
     }
 
     static void Log(string message, string stack, LogType type)
     {
-        if (stack.Contains("UnityEditor.Search.SearchDatabase"))
+        if (stack != null && stack.Contains("UnityEditor.Search.SearchDatabase"))
         {
-            Results.Add("EDITOR: Unity Search indexing error (outside rendering): " + message);
-            return;
+            Results.Add("EDITOR: Unity Search diagnostic: " + message);
         }
-        if (type == LogType.Error || type == LogType.Exception || type == LogType.Assert) Errors.Add(message);
+        if (type == LogType.Error || type == LogType.Exception || type == LogType.Assert)
+            SessionState.SetString(FailureLog, Errors + "[" + type + "] " + message + "\n" + stack + "\n");
     }
 
     static void Tick()
@@ -73,24 +109,53 @@ public static class QualityRunner
         try
         {
             if (_routine.MoveNext()) return;
-            Check(Errors.Count == 0, "No runtime/shader/render graph errors: " + string.Join("\n", Errors));
+            Check(string.IsNullOrEmpty(Errors), "No initialization/runtime/shader/render graph errors: " + Errors);
             Finish(0);
         }
         catch (Exception exception)
         {
-            Results.Add("FAIL: " + exception);
-            Debug.LogException(exception);
-            Finish(1);
+            Fail(exception);
         }
+    }
+
+    static void Fail(Exception exception)
+    {
+        Results.Add("FAIL: " + exception);
+        Debug.LogException(exception);
+        Finish(1);
     }
 
     static void Finish(int exit)
     {
-        SessionState.SetBool(Running, false);
-        File.WriteAllLines(Path.Combine(Output, "results.txt"), Results);
-        Debug.Log("CREST_QUALITY_RESULT " + (exit == 0 ? "PASS" : "FAIL") + "\n" + string.Join("\n", Results));
+        if (!string.IsNullOrEmpty(Errors))
+        {
+            exit = 1;
+            Results.Add("FAIL: Captured Unity errors:\n" + Errors);
+        }
         EditorApplication.update -= Tick;
-        EditorApplication.Exit(exit);
+        EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+        Application.logMessageReceived -= Log;
+        SessionState.EraseBool(Running);
+        SessionState.EraseBool(SpecularAA);
+        SessionState.EraseString(FailureLog);
+        _routine = null;
+        _frame = -1;
+        try
+        {
+            Directory.CreateDirectory(Output);
+            File.WriteAllLines(Path.Combine(Output, "results.txt"), Results);
+        }
+        catch (Exception exception)
+        {
+            exit = 1;
+            Results.Add("FAIL: Writing results: " + exception);
+            Debug.LogException(exception);
+        }
+        finally
+        {
+            Debug.Log("CREST_QUALITY_RESULT " + (exit == 0 ? "PASS" : "FAIL") + "\n" + string.Join("\n", Results));
+            EditorApplication.Exit(exit);
+        }
     }
 
     static void Check(bool condition, string message)

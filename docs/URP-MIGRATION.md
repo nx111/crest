@@ -11,15 +11,25 @@ It does not include the commercial Crest URP package.
   corrected water-path attenuation and caustics, followed by planar reflection filtering,
   explicit normal gradients, precise shallow-water caches and corrected underwater Fresnel blending.
   Later batches correct geometric wave normals, FFT loop spectrum/timing, Gerstner phase
-  precision, FFT baking and foam transport/input/compositing. The latest batch reorients
+  precision, FFT baking and foam transport/input/compositing. The fourth batch reorients
   detail normals, gives local lights each foam Flow phase's normal/variance, and fixes
   baked FFT query coordinates, temporal interpolation and index boundaries.
-  Their validation is offline HLSL compilation,
-  C# syntax and numerical checks; **Unity/GPU validation has not been rerun for these changes**.
+  User-supplied tests of **`90a93293`** now cover Editor D3D11 (322 assertions),
+  Windows D3D11/D3D12 and Android Vulkan Players (60 assertions each), including
+  actual RNM/foam HLSL and baked FFT/Burst query contracts. The supplied list of
+  213 production source hashes matches that commit. These are bounded test cases,
+  not full visual or performance acceptance.
   See [URP-REALISM-IMPROVEMENTS.md](URP-REALISM-IMPROVEMENTS.md), the
   [reflection and shallow-water report](URP-REFLECTIONS-AND-SHALLOW-WATER.md), the
   [wave and foam stability report](URP-WAVES-AND-FOAM-STABILITY.md), and the latest
   [surface detail and wave query report](URP-SURFACE-DETAIL-AND-WAVE-QUERIES.md) for results, controls and limits.
+- **Latest runtime follow-up:** bounded asynchronous query submission, exact registrar
+  ownership, persistent coordinate compaction, safe output spans and callback-aware cleanup;
+  test-runner startup errors now survive domain reload and Search errors remain fatal.
+  These new fixes have offline verification and need real Unity/device retesting.
+  The [runtime follow-up report](URP-RUNTIME-FOLLOWUP.md) also records the first Windows
+  query-ring failure, RHalf foam lifetime drift, Android startup class error and
+  the Android frame budget still unmet by the default examples.
 - Renderer: **Universal Renderer with Render Graph enabled**, initially Forward,
   Linear color, MSAA off, render scale 1.0. The 2D Renderer is not supported.
 - **Headless Unity import, C# API binding, pipeline creation, example asset conversion
@@ -35,7 +45,9 @@ It does not include the commercial Crest URP package.
   of 0**, using identical geometry, time, camera, material keywords, a single sun
   and fixed cubemap. Foam, scene refraction, shadows and caustics were disabled in
   this comparison. See [URP-QUALITY-AUDIT.md](URP-QUALITY-AUDIT.md) for evidence and limits.
-- Full shader variant coverage, player builds and device validation have not been run.
+- Full shader variant coverage and device/visual/performance validation beyond the
+  reported `90a93293` cases remain pending. The uploaded Android rendering checks pass,
+  but the complete startup log has a class-loading error and the measured frame budget fails.
 - This branch is ready for local compilation and visual review, not a declaration
   of tested visual equivalence or production readiness.
 
@@ -198,9 +210,11 @@ python tools/check_urp_regressions.py --ref 175fe207 URPRegressions.test_reconst
 
 That command is expected to fail on the old source.
 
-The complete current regression suite, selected DXC shader matrix and the four new
+The wave/foam regression suite, selected DXC shader matrix and the four new
 checks against baseline `8b56660e` are documented in
 [wave and foam verification](URP-WAVES-AND-FOAM-STABILITY.md#5-最终验证与复现).
+Later checks are documented in the [surface detail report](URP-SURFACE-DETAIL-AND-WAVE-QUERIES.md#5-最终验证与复现)
+and [runtime follow-up](URP-RUNTIME-FOLLOWUP.md#8-本轮验证与复测要求).
 
 See [static-check-results.md](static-check-results.md) for the results recorded
 for this migration. Reproduce actual GPU checks using
