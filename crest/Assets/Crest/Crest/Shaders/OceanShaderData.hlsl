@@ -13,11 +13,22 @@
 TEXTURE2D_X(_CameraDepthTexture); SAMPLER(sampler_CameraDepthTexture);
 #if defined(CREST_URP)
 UNITY_DECLARE_SCREENSPACE_TEXTURE(_CameraOpaqueTexture);
-#define _BackgroundTexture _CameraOpaqueTexture
-#define sampler_BackgroundTexture sampler_CameraOpaqueTexture
+UNITY_DECLARE_SCREENSPACE_TEXTURE(_CrestRefractionTexture);
+int _CrestRefractionEnabled;
 #else
 UNITY_DECLARE_SCREENSPACE_TEXTURE(_BackgroundTexture);
 #endif
+
+half3 CrestSampleBackground(float2 uv)
+{
+#if defined(CREST_URP)
+    if (_CrestRefractionEnabled != 0)
+        return UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CrestRefractionTexture, uv).rgb;
+    return UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CameraOpaqueTexture, uv).rgb;
+#else
+    return UNITY_SAMPLE_SCREENSPACE_TEXTURE(_BackgroundTexture, uv).rgb;
+#endif
+}
 
 half3 _CrestAmbientLighting;
 
@@ -50,6 +61,10 @@ TEXTURECUBE(_ReflectionCubemapOverride); SAMPLER(sampler_ReflectionCubemapOverri
 // Constant buffer: CrestPerMaterial
 
 CBUFFER_START(CrestInputsPerMaterial)
+
+half _AdditionalLightIntensity;
+half _AdditionalLightBoost;
+half _AdditionalLightFallOff;
 
 // ----------------------------------------------------------------------------
 // Diffuse

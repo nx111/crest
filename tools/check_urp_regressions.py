@@ -198,7 +198,7 @@ class URPRegressions(unittest.TestCase):
         self.assertRegex(sample, r"#else\s+return 1.0h;")
         self.assertRegex(sample, r"SampleShadowmap\(TEXTURE2D_ARGS\(_MainLightShadowmapTexture, sampler_LinearClampCompare\),\s*CrestWorldToMainLightShadowCoord\(positionWS\), GetMainLightShadowSamplingData\(\), GetMainLightShadowParams\(\), false\)")
         self.assertIn("CrestMainLightShadow(i_scenePos)", source(RECONSTRUCTION[0]))
-        self.assertIn("CrestMainLightShadow(positionWS.xyz)", source(SHADOW_SHADERS[3]))
+        self.assertIn("CrestMainLightShadow(positionWS.xyz, false)", source(SHADOW_SHADERS[3]))
         self.assertIn("data.shadowCascadeCount = shadowData.mainLightShadowCascadesCount;", feature)
         self.assertIn("cmd.SetGlobalInt(s_MainLightShadowCascadeCount, pass.shadowCascadeCount);", feature)
         self.assertIn("builder.UseTexture(resources.mainShadowsTexture)", feature)

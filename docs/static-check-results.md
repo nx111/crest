@@ -98,3 +98,38 @@ reviewed against official URP 17.6 source at
 [`a7e4c051`](https://github.com/Unity-Technologies/Graphics/tree/a7e4c051d256a781ab362c64316b125a1e104694/Packages/com.unity.render-pipelines.universal).
 World-space caustics and shadow accumulation read the already declared main-light
 atlas directly; they do not depend on the later screen-space shadow texture.
+
+## Rendering quality follow-up — 2026-10-11
+
+Starting revision: `3dd1c82b` on `urp`. The historical “Not run” entries above
+describe earlier checks; the current code has now been compiled and rendered in
+a disposable project copy using Unity **6000.6.2f1 / URP 17.6.0**, **GTX 1650 / D3D11**.
+The source project was not given a Library or changed by the test editor.
+The full audit is in [URP-QUALITY-AUDIT.md](URP-QUALITY-AUDIT.md).
+
+| Check | Result |
+| --- | --- |
+| Current C# API binding / Play Mode | **Passed**; renderer feature and quality runner compile in the target editor |
+| `python tools/check_urp.py` | **0 errors**; 100 shader/HLSL/compute files, 185 local includes, 6 asmdefs, 14 new Unity resource metadata entries |
+| `python tools/check_urp_regressions.py -v` | **9 tests passed**, including the existing 243-point reconstruction regression |
+| `dotnet run --project tools/StaticChecks -- crest/Assets` | **0 syntax errors**; 146 files × 4 Unity Editor/Player configurations |
+| Whitespace | `git diff --check`: **passed** |
+| GPU local lights | **Passed**: point/spot illumination, zero intensity, range/cone rejection, independent local highlights, additional spot shadows, per-vertex asset mode, basic Forward+ cluster loop |
+| GPU reflection/refraction | **Passed**: local probe box projection, ordinary queue-3000 URP transparent capture, wave-normal distortion, per-camera opaque fallback |
+| GPU underwater/cameras | **Passed**: both fullscreen composition paths; MSAA 1/2/4/8; render scale 0.75; orthographic rendering smoke check |
+| Current examples | **All 7 scenes passed** exercised material-pass compilation, ocean existence and error-shader checks |
+| Original Built-in surface comparison | **Mean per-pixel RGB absolute-difference sum: 0** at 960 × 540, using the baseline shader/includes and controlled single-sun/fixed-cubemap settings |
+| Editor result | **`CREST_QUALITY_RESULT PASS`**, 37 captures, exit code 0; no runtime/shader/Render Graph errors |
+| Full variants / player builds / device / performance | **Not run** |
+
+The original shader comparison changes only the reference shader name, switches
+the actual pipeline, and retains identical simulation geometry, time, camera,
+material properties and active keywords. Foam, scene refraction, shadows,
+caustics, albedo and planar reflection are disabled in that test. This establishes
+agreement for the isolated surface case, not complete original-project equivalence.
+
+The final run reports one unrelated Unity Search indexing exception from
+`UnityEditor.Search.SearchDatabase` as an `EDITOR` note. Rendering errors are fatal
+and none were recorded. The raw assertion record and 13 selected previews are
+preserved under [_media/urp-quality/2026-10-11](_media/urp-quality/2026-10-11/results.txt).
+See [UnityQualityTests](../tools/UnityQualityTests/README.md) to reproduce the run.

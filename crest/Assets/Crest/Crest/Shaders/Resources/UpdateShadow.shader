@@ -18,7 +18,8 @@ Shader "Hidden/Crest/Simulation/Update Shadow"
             #include "../ShaderLibrary/UpdateShadow.hlsl"
             half CrestSampleShadows(const float4 positionWS)
             {
-                return CrestMainLightShadow(positionWS.xyz);
+                // The temporal shadow accumulator applies distance fade itself.
+                return CrestMainLightShadow(positionWS.xyz, false);
             }
             half CrestComputeShadowFade(const float4 positionWS)
             {

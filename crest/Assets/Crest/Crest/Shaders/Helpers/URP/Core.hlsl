@@ -16,12 +16,13 @@
 #define UNITY_APPLY_FOG(coord, color) color.rgb = MixFog(color.rgb, coord);
 #define UNITY_DECLARE_SCREENSPACE_TEXTURE(name) TEXTURE2D_X(name); SAMPLER(sampler##name);
 #define UNITY_SAMPLE_SCREENSPACE_TEXTURE(name, uv) SAMPLE_TEXTURE2D_X(name, sampler##name, UnityStereoTransformScreenSpaceTex(uv))
-#define _LightColor0 _MainLightColor.rgb
+#define _LightColor0 (_MainLightColor.rgb * GetMainLight().distanceAttenuation)
 #define _ScreenSize float4(_ScaledScreenParams.xy, rcp(_ScaledScreenParams.xy))
 
 // World-space queries also run before URP's screen-space shadow texture exists.
 // Its screen keyword hides the cascade keyword, so use the camera's actual count.
 int _CrestMainLightShadowCascadeCount;
+int _CrestRefractionPass;
 
 float4 CrestWorldToMainLightShadowCoord(float3 positionWS)
 {
@@ -35,11 +36,19 @@ float4 CrestWorldToMainLightShadowCoord(float3 positionWS)
     return float4(mul(_MainLightWorldToShadow[cascadeIndex], float4(positionWS, 1.0)).xyz, 0.0);
 }
 
-half CrestMainLightShadow(float3 positionWS)
+half CrestMainLightShadow(float3 positionWS, bool applyFade = true)
 {
 #if defined(MAIN_LIGHT_CALCULATE_SHADOWS)
-    return SampleShadowmap(TEXTURE2D_ARGS(_MainLightShadowmapTexture, sampler_LinearClampCompare),
+#if defined(CREST_SAMPLE_SHADOW_HARD)
+    // Crest creates softness by temporal world-space jitter. Keep its hard channel sharp even when URP PCF is on.
+    float4 shadowCoord = CrestWorldToMainLightShadowCoord(positionWS);
+    half shadow = LerpWhiteTo(SAMPLE_TEXTURE2D_SHADOW(_MainLightShadowmapTexture, sampler_LinearClampCompare, shadowCoord.xyz), GetMainLightShadowParams().x);
+    shadow = BEYOND_SHADOW_FAR(shadowCoord) ? 1.0h : shadow;
+#else
+    half shadow = SampleShadowmap(TEXTURE2D_ARGS(_MainLightShadowmapTexture, sampler_LinearClampCompare),
         CrestWorldToMainLightShadowCoord(positionWS), GetMainLightShadowSamplingData(), GetMainLightShadowParams(), false);
+#endif
+    return applyFade ? lerp(shadow, 1.0h, GetMainLightShadowFade(positionWS)) : shadow;
 #else
     return 1.0h;
 #endif

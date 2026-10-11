@@ -9,30 +9,48 @@ namespace Crest
     /// <summary>URP 17 Render Graph integration. Add once to every renderer used by water cameras.</summary>
     public sealed class CrestUniversalRendererFeature : ScriptableRendererFeature
     {
+        [Tooltip("Transparent objects drawn before water and included in refraction. Exclude these layers from the Universal Renderer's Transparent Layer Mask. Do not include the water layer.")]
+        [SerializeField] LayerMask _refractedLayers;
+        public LayerMask RefractedLayers { get => _refractedLayers; set => _refractedLayers = value; }
+
         // Example/custom inputs can record commands after the water mask, before scene depth/opaques.
         public static event System.Action<CommandBuffer, Camera, RenderTextureDescriptor> BeforeSceneRendering;
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         static void ResetEvents() => BeforeSceneRendering = null;
         static readonly int s_MainLightShadowCascadeCount = Shader.PropertyToID("_CrestMainLightShadowCascadeCount");
         CrestPass _prepare, _before, _after;
+        CrestRefractionPass _refractionObjects, _refractionCopy;
 
         public override void Create()
         {
             _prepare = new CrestPass(0, RenderPassEvent.BeforeRenderingPrePasses);
-            _before = new CrestPass(1, RenderPassEvent.BeforeRenderingTransparents);
+            _refractionObjects = new CrestRefractionPass(false, (RenderPassEvent)((int)RenderPassEvent.BeforeRenderingTransparents - 2));
+            _before = new CrestPass(1, (RenderPassEvent)((int)RenderPassEvent.BeforeRenderingTransparents - 1));
+            _refractionCopy = new CrestRefractionPass(true, RenderPassEvent.BeforeRenderingTransparents);
             _after = new CrestPass(2, RenderPassEvent.BeforeRenderingPostProcessing);
         }
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
             var camera = renderingData.cameraData.camera;
-            if (OceanRenderer.Instance == null || camera.cameraType == CameraType.Reflection ||
-                camera.cameraType == CameraType.Preview || renderingData.cameraData.renderType == CameraRenderType.Overlay)
+            if (camera.cameraType == CameraType.Preview ||
+                renderingData.cameraData.cameraTargetDescriptor.graphicsFormat == UnityEngine.Experimental.Rendering.GraphicsFormat.None)
                 return;
+
+            // These layers replace the renderer's ordinary transparent draw, including when no ocean is active,
+            // in reflections and on overlay cameras. Otherwise excluded objects would disappear in those views.
+            if (_refractedLayers.value != 0)
+            {
+                _refractionObjects.layers = _refractedLayers;
+                renderer.EnqueuePass(_refractionObjects);
+            }
+            if (OceanRenderer.Instance == null || camera.cameraType == CameraType.Reflection ||
+                renderingData.cameraData.renderType == CameraRenderType.Overlay) return;
 
             renderer.EnqueuePass(_prepare);
             // Always request depth and opaque color: the ocean surface needs both even without underwater.
             renderer.EnqueuePass(_before);
+            if (_refractedLayers.value != 0) renderer.EnqueuePass(_refractionCopy);
             var underwater = UnderwaterRenderer.Get(camera);
             if (underwater != null && underwater.isActiveAndEnabled && !underwater.EnableShaderAPI)
                 renderer.EnqueuePass(_after);
@@ -123,6 +141,8 @@ namespace Crest
                         {
                             // Resolve waterline handling per rendered camera, after URP's MSAA fallbacks.
                             cmd.SetGlobalInt(OceanRenderer.sp_CrestDepthTextureOffset, pass.descriptor.msaaSamples > 1 ? 1 : 0);
+                            cmd.SetGlobalInt(CrestRefractionPass.EnabledId, 0);
+                            cmd.SetGlobalInt(CrestRefractionPass.DrawingId, 0);
                             cmd.DisableShaderKeyword("CREST_WATER_VOLUME_2D");
                             cmd.DisableShaderKeyword("CREST_WATER_VOLUME_HAS_BACKFACE");
                             cmd.DisableShaderKeyword("CREST_UNDERWATER_BEFORE_TRANSPARENT");

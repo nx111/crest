@@ -127,6 +127,14 @@ namespace Crest
             }
             pipeline.supportsCameraDepthTexture = true;
             pipeline.supportsCameraOpaqueTexture = true;
+            pipeline.maxAdditionalLightsCount = 8;
+            // URP exposes these setters internally; use its serialized asset settings in the editor.
+            var options = new SerializedObject(pipeline);
+            options.FindProperty("m_ReflectionProbeBlending").boolValue = true;
+            options.FindProperty("m_ReflectionProbeBoxProjection").boolValue = true;
+            options.FindProperty("m_AdditionalLightShadowsSupported").boolValue = true;
+            options.FindProperty("m_SoftShadowsSupported").boolValue = true;
+            options.ApplyModifiedPropertiesWithoutUndo();
             pipeline.msaaSampleCount = 1;
             GraphicsSettings.defaultRenderPipeline = pipeline;
             // Existing per-quality BIRP/other overrides would otherwise hide the new default.
@@ -162,6 +170,39 @@ namespace Crest
             AssetDatabase.SaveAssets();
         }
 
+        [MenuItem("Crest/URP/Configure Transparent Refraction")]
+        public static void ConfigureTransparentRefraction()
+        {
+            var renderer = Selection.activeObject as UniversalRendererData;
+            if (renderer == null) renderer = AssetDatabase.LoadAssetAtPath<UniversalRendererData>(Folder + "/CrestRenderer.asset");
+            if (renderer == null) throw new BuildFailedException("Select the Universal Renderer Data used by your water camera.");
+            const string layerName = "Crest Refracted";
+            var layer = LayerMask.NameToLayer(layerName);
+            if (layer < 0)
+            {
+                var tags = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0]);
+                var layers = tags.FindProperty("layers");
+                for (var i = 8; i < layers.arraySize; i++)
+                {
+                    if (!string.IsNullOrEmpty(layers.GetArrayElementAtIndex(i).stringValue)) continue;
+                    layer = i;
+                    layers.GetArrayElementAtIndex(i).stringValue = layerName;
+                    tags.ApplyModifiedProperties();
+                    break;
+                }
+            }
+            if (layer < 0) throw new BuildFailedException("No free user layer for Crest Refracted. Configure Refracted Layers manually.");
+            AddFeature(renderer);
+            var feature = renderer.rendererFeatures.OfType<CrestUniversalRendererFeature>().First();
+            Undo.RecordObjects(new Object[] { renderer, feature }, "Configure Crest transparent refraction");
+            feature.RefractedLayers = feature.RefractedLayers.value | (1 << layer);
+            renderer.transparentLayerMask = renderer.transparentLayerMask.value & ~feature.RefractedLayers.value;
+            EditorUtility.SetDirty(feature);
+            EditorUtility.SetDirty(renderer);
+            AssetDatabase.SaveAssets();
+            Debug.Log("Crest refraction configured. Assign underwater transparent renderers to the Crest Refracted layer. Keep water on its existing layer.");
+        }
+
         [MenuItem("Crest/URP/Validate Active Pipeline")]
         public static void ValidatePipeline()
         {
@@ -179,8 +220,16 @@ namespace Crest
             for (var i = 0; i < renderers.arraySize; i++)
             {
                 var renderer = renderers.GetArrayElementAtIndex(i).objectReferenceValue as UniversalRendererData;
-                if (renderer == null || !renderer.rendererFeatures.Any(x => x is CrestUniversalRendererFeature && x.isActive))
-                    throw new BuildFailedException("Each Universal Renderer used by Crest cameras needs an active CrestUniversalRendererFeature.");
+                if (renderer == null || renderer.rendererFeatures.OfType<CrestUniversalRendererFeature>().Count(x => x.isActive) != 1)
+                    throw new BuildFailedException("Each Universal Renderer used by Crest cameras needs exactly one active CrestUniversalRendererFeature.");
+                foreach (var feature in renderer.rendererFeatures.OfType<CrestUniversalRendererFeature>().Where(x => x.isActive))
+                {
+                    if ((renderer.transparentLayerMask.value & feature.RefractedLayers.value) != 0)
+                        throw new BuildFailedException("Exclude Crest Refracted Layers from the renderer's Transparent Layer Mask to prevent double rendering.");
+                    foreach (var ocean in Object.FindObjectsByType<OceanRenderer>(FindObjectsSortMode.None))
+                        if ((feature.RefractedLayers.value & (1 << ocean.Layer)) != 0)
+                            throw new BuildFailedException("Water cannot be on Crest Refracted Layers: its color must be captured before the ocean draw.");
+                }
             }
             Debug.Log("Crest URP configuration checks passed. This is not a Unity shader or device rendering test.");
         }

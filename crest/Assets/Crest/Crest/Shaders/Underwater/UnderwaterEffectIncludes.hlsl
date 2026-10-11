@@ -85,6 +85,10 @@ float3 CrestWorldToUV(in float2 i_samplePos, in CascadeParams i_cascadeParams, i
 
 bool CrestApplyUnderwaterFog(const float2 positionNDC, const float3 positionWS, float deviceDepth, half multiplier, inout half3 color)
 {
+#if defined(CREST_URP)
+    // Refracted transparents are composed before the fullscreen water fog pass.
+    if (_CrestRefractionPass != 0) return false;
+#endif
 #if CREST_WATER_VOLUME
 	// No fog before volume.
 	float rawFrontFaceZ = UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CrestWaterVolumeFrontFaceTexture, positionNDC).r;

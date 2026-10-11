@@ -13,15 +13,22 @@ It does not include the commercial Crest URP package.
   and configuration validation passed locally on Unity 6000.6.2f1 / URP 17.6.0.**
   The project includes the generated pipeline assets and converted example materials;
   see [static-check-results.md](static-check-results.md).
-- **D3D11 rendering smoke checks passed for all seven example scenes and both
-  underwater composition paths**, including synchronous compilation of the passes
-  on 51 visible renderer materials. Nine captured frames were checked locally.
+- **The 2026-10-11 D3D11 quality run passed with 37 captured frames**: all seven
+  example scenes, both fullscreen underwater paths, point/spot illumination and
+  shadows, local highlights, probe box projection, selected transparent refraction,
+  MSAA 1/2/4/8, render scale 0.75 and an orthographic smoke check.
+  A basic Forward+ local-light check also passed.
+- **Controlled original Built-in/URP surface shading matched with an image delta
+  of 0**, using identical geometry, time, camera, material keywords, a single sun
+  and fixed cubemap. Foam, scene refraction, shadows and caustics were disabled in
+  this comparison. See [URP-QUALITY-AUDIT.md](URP-QUALITY-AUDIT.md) for evidence and limits.
 - Full shader variant coverage, player builds and device validation have not been run.
 - This branch is ready for local compilation and visual review, not a declaration
   of tested visual equivalence or production readiness.
 
 URP 17.6's official source removes the old compatibility execution path. This
-port implements `RecordRenderGraph` with `AddUnsafePass`, using declared camera
+port implements `RecordRenderGraph` with unsafe water passes and raster transparent
+composition/color-copy passes, using declared camera
 color/depth/shadow dependencies, imported persistent water-mask textures, and
 explicit global state ordering. **Do not disable Render Graph.** Earlier Unity 6
 releases require their corresponding URP 17 minor version; changing those pins is
@@ -31,11 +38,13 @@ a separate local compatibility test, not a tested configuration of this branch.
 
 | Area | Change |
 | --- | --- |
-| Ocean shading | URP Core/Lighting, `UniversalForwardOnly`, opaque-color refraction instead of GrabPass, URP main light/probe reflection and world-space caustic shadows. Material shader names, property names and existing asset GUIDs are retained. |
+| Ocean shading | URP Core/Lighting, `UniversalForwardOnly`, opaque-color or selected-transparent refraction instead of GrabPass, URP main light/probe reflection and world-space caustic shadows. Additional lights contribute scattering, independent local highlights and foam lighting, with URP range/cone/shadow/cookie/layer attenuation. Existing shader names, properties and asset GUIDs are retained. |
 | Render scheduling | `CrestUniversalRendererFeature`: shadows and water masks before scene depth/opaques, optional underwater fog before transparents, or underwater composition before post-processing. Camera matrices and viewport are restored after explicit simulation draws and custom camera commands. |
 | Water masks | Persistent textures imported into Render Graph; descriptors follow the URP camera size; MSAA disabled on sampled mask/volume textures. |
 | Underwater color | A graph-owned resolved color copy replaces an early-released temporary texture on the URP path. Stencil depth follows camera MSAA. Early fog refreshes opaque color for subsequent refraction. |
-| Ocean shadows | Main-light shadow atlas sampling, retaining Crest's persistent two-channel shadow accumulation. No URP dependency on `Light.AddCommandBuffer`. |
+| Transparent refraction | Opt-in `Refracted Layers` draw ordinary URP transparents before water; a resolved full-resolution, bilinear-filtered color copy includes them in refraction. The layers are excluded from the renderer's normal transparent draw. Early objects skip per-object Crest fog, which is applied by fullscreen composition. |
+| Ocean shadows | Main-light atlas sampling with distance fade for world queries, retaining Crest's persistent two-channel temporal accumulation without adding URP PCF to its hard channel. No URP dependency on `Light.AddCommandBuffer`. |
+| Reflection probes | World-position blending/box projection, the relevant shader variants and example asset settings; clustered probe atlas variant included. |
 | Camera requests | Planar reflection and depth-cache capture use `UniversalRenderPipeline.SingleCameraRequest`. Reflection cameras skip Crest's view-camera passes; water activation and culling state are restored in `finally`. |
 | Tile bindings | Water tiles bind their per-camera data explicitly; no dependency on `Camera.current` to update reflection textures. |
 | Examples | Surface Shaders and the gradient sky replaced with explicit URP passes; Standard/terrain materials and built-in default material references converted. The shared camera prefab includes URP camera data. Example custom camera commands now run after the water mask, before scene depth/opaques. Serialized BIRP `CameraEvent` values do not define URP execution order. |
@@ -52,6 +61,8 @@ they do not require the built-in camera lighting or GrabPass pipeline.
 2. The example project already assigns `Assets/CrestURPSettings/CrestPipeline.asset`
    to Graphics and all quality levels. It enables Depth/Opaque Texture, keeps opaque
    color at full resolution, disables MSAA, and uses four shadow cascades over 150 units.
+   Probe blending/box projection, additional-light shadows and soft shadows are enabled;
+   the per-object additional-light limit is eight. These quality options add GPU cost.
    **Crest > URP > Create and Assign Pipeline** can recreate the generated assets.
    In an existing game, use its URP asset and **Add Feature to Selected Renderer**
    instead of replacing its Graphics/Quality settings.
@@ -64,16 +75,28 @@ they do not require the built-in camera lighting or GrabPass pipeline.
    assets are restored. `Crest/Ocean` materials retain their shader GUIDs and properties.
 5. Use `UnderwaterRenderer` on the view camera. Prefer it over the deprecated
    underwater curtain helper. Use the same directional sun for URP and
-   `OceanRenderer._primaryLight`; initially disable screen-space shadow renderer
-   features and use URP's main-light atlas shadows.
-6. The example UI uses screen-space overlay canvases. Crest water processing runs on base Game/Scene View
-   cameras and is deliberately excluded from overlay, preview and reflection cameras.
+   `OceanRenderer._primaryLight`. Water/world-space shadow queries use URP's main-light
+   atlas; complete the shadow-combination review below when enabling a screen-space
+   shadow renderer feature.
+6. To refract underwater transparent objects, assign them to **Crest Refracted**
+   (layer 9 in the example project). Keep water on its existing layer. In another
+   project, select its Universal Renderer Data and run **Configure Transparent
+   Refraction**; this configures the feature and excludes the layer from the
+   renderer's **Transparent Layer Mask**. Run validation afterwards. Regular URP
+   transparent materials are supported. Clearing `Refracted Layers` also requires
+   restoring those layers to the normal Transparent Layer Mask.
+7. The example UI uses screen-space overlay canvases. Crest water fog/mask/copy
+   processing runs on base Game/Scene View cameras and is excluded from overlay,
+   preview and reflection cameras. The replacement selected-transparent draw also
+   runs without an ocean and on reflection/overlay cameras so excluded objects remain visible.
 
 ## 本地复核清单
 
-本次焦散坐标、相机 MSAA、阴影变体和反射探针混合修复已通过静态／数值回归，
-尚未在 Unity 6000.6.2f1 中重新编译或渲染。前述 D3D11 结果属于修复前的提交。
-本次优先复核以下项目：
+截至 2026-10-11，当前代码已在 Unity 6000.6.2f1 / URP 17.6.0 中重新编译和渲染。
+静态／数值回归与 37 帧 GPU 检查均通过，包含透明折射、局部光源、盒投影及
+两种全屏水下路径。详细范围、对照图和仍待验收的差距见
+[渲染质量复核报告](URP-QUALITY-AUDIT.md)；自动检查的复现步骤见
+[UnityQualityTests](../tools/UnityQualityTests/README.md)。以下仍是完整人工验收项：
 
 - [ ] **焦散位置**：浅水池底放置可辨识物体，分别从水上和水下观察；转动、平移相机，
   检查焦散贴合池底及遮挡物；远离原点后重复。对比新水下效果与旧 Curtain 路径。
@@ -103,8 +126,8 @@ they do not require the built-in camera lighting or GrabPass pipeline.
 - [ ] **Windows 构建**：Development Build，D3D11 首测，再测 D3D12；重启独立播放器检查 Shader variant stripping，尤其水下和阴影组合。
 - [ ] **Android 真机**：ARM64、Vulkan、IL2CPP；首次加载、暂停恢复、场景切换各测一次；记录 GPU/CPU 帧时、峰值内存、RT 内存及首次 FFT/深度缓存时延。沿用上游限制：不支持 OpenGL ES / WebGL。
 
-Forward+、Deferred、XR、多视图、动态分辨率、第三方屏幕空间效果与任意自定义
-相机堆栈都需要另行复核；本次没有为这些组合提供已通过的运行结果。
+Forward+ 已通过局部光源基础检查；完整 Forward+、Deferred、XR、多视图、动态分辨率、
+第三方屏幕空间效果与任意自定义相机堆栈仍需要另行复核。
 
 ## Reproduce static checks
 
@@ -140,7 +163,8 @@ python tools/check_urp_regressions.py --ref 175fe207 URPRegressions.test_reconst
 That command is expected to fail on the old source.
 
 See [static-check-results.md](static-check-results.md) for the results recorded
-for this migration.
+for this migration. Reproduce actual GPU checks using
+[tools/UnityQualityTests](../tools/UnityQualityTests/README.md) in a disposable project copy.
 
 ## API references
 

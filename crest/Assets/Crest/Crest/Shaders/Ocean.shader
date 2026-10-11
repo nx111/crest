@@ -105,6 +105,11 @@ Shader "Crest/Ocean"
 		// Same as "Falloff" except only up to "Far Distance".
 		_DirectionalLightFallOffFar("Falloff At Far Distance", Range(1.0, 4096.0)) = 42.0
 
+		[Header(Additional Lights)]
+		_AdditionalLightIntensity("Point and Spot Light Intensity", Range(0.0, 8.0)) = 1.0
+		_AdditionalLightBoost("Point and Spot Highlight Boost", Range(0.0, 512.0)) = 7.0
+		_AdditionalLightFallOff("Point and Spot Highlight Falloff", Range(1.0, 4096.0)) = 275.0
+
 		[Header(Foam)]
 		// Enable foam layer on ocean surface
 		[Toggle] _Foam("Enable", Float) = 1
@@ -233,6 +238,13 @@ Shader "Crest/Ocean"
 			#pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
 			#pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
 			#pragma multi_compile_fragment _ _REFLECTION_PROBE_BLENDING
+			#pragma multi_compile_fragment _ _REFLECTION_PROBE_BOX_PROJECTION
+			#pragma multi_compile_fragment _ _REFLECTION_PROBE_ATLAS
+			#pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
+			#pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+			#pragma multi_compile_fragment _ _LIGHT_COOKIES
+			#pragma multi_compile _ _LIGHT_LAYERS
+			#pragma multi_compile _ _CLUSTER_LIGHT_LOOP
 			// for VFACE
 			#pragma target 4.5
 			#pragma multi_compile_fog
@@ -272,6 +284,7 @@ Shader "Crest/Ocean"
 
 			#pragma multi_compile _ CREST_FLOATING_ORIGIN
 
+			#define _SURFACE_TYPE_TRANSPARENT 1
 			#include "Helpers/URP/Core.hlsl"
 
 
@@ -291,6 +304,7 @@ Shader "Crest/Ocean"
 			#include "OceanNormalMapping.hlsl"
 			#include "OceanReflection.hlsl"
 			#include "OceanFoam.hlsl"
+			#include "OceanAdditionalLights.hlsl"
 
 			struct Attributes
 			{
@@ -694,6 +708,11 @@ Shader "Crest/Ocean"
 					lightCol,
 					underwater
 				);
+
+				half3 additionalScatter, additionalSpecular, additionalFoam;
+				CrestAdditionalLights(input.worldPos, n_pixel, view, uvDepth, seaDepth, sss, underwater,
+					additionalScatter, additionalSpecular, additionalFoam);
+				scatterCol += additionalScatter;
 				half3 col = OceanEmission
 				(
 					view,
@@ -738,10 +757,12 @@ Shader "Crest/Ocean"
 				#endif
 				{
 					ApplyReflectionSky(view, n_pixel, input.worldPos, lightDir, shadow.y, screenPos.xyzz, pixelZ, 1.0, col);
+					col += additionalSpecular * CalculateFresnelReflectionCoefficient(saturate(dot(n_pixel, view))) * _Specular * reflAlpha;
 				}
 
 				// Override final result with white foam - bubbles on surface
 				#if _FOAM_ON
+				whiteFoamCol.rgb += additionalFoam;
 				col = lerp(col, whiteFoamCol.rgb, whiteFoamCol.a);
 				#endif
 

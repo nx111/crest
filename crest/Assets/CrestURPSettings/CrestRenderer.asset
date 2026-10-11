@@ -13,6 +13,9 @@ MonoBehaviour:
   m_Name: Crest Ocean
   m_EditorClassIdentifier: Crest::Crest.CrestUniversalRendererFeature
   m_Active: 1
+  _refractedLayers:
+    serializedVersion: 2
+    m_Bits: 512
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -51,7 +54,7 @@ MonoBehaviour:
     m_Bits: 4294967295
   m_TransparentLayerMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 4294966783
   m_DefaultStencilState:
     overrideStencilState: 0
     stencilReference: 0
