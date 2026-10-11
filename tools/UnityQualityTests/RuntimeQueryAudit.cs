@@ -148,12 +148,17 @@ public static class RuntimeQueryAudit
         {
             var points = new[] { new Vector3(17, 0, -28), new Vector3(-14, 0, -46), new Vector3(60, 0, -22) };
             var displacements = new Vector3[3]; var normals = new Vector3[3]; var velocities = new Vector3[3];
+            var invalid = new Vector3(float.NaN, float.NaN, float.NaN);
             bool valid = false;
             for (int frame = 0; frame < 180; frame++)
             {
+                // A failed or partial query must not pass using zero-initialized or earlier outputs.
+                for (int point = 0; point < points.Length; point++)
+                    displacements[point] = normals[point] = velocities[point] = invalid;
                 var status = production.Query(a, 2, points, displacements, normals, velocities);
                 production.UpdateQueries();
-                if (production.RetrieveSucceeded(status) && frame > 3)
+                // RetrieveSucceeded alone does not reject invalid or unavailable velocity data.
+                if (status == (int)QueryBase.QueryStatus.OK && frame > 3)
                 {
                     valid = true;
                     foreach (var value in displacements) valid &= Finite(value);

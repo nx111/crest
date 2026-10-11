@@ -5,6 +5,8 @@
 Unity 为 6000.6.2f1，URP 17.6.0。Windows 使用 GTX 1650，Android 使用 Samsung SM-G9750 / Adreno 640 / Android 12。
 所有 Unity 构建串行执行，复用原有 Library 与 shader cache。
 
+本报告的最终生产修复已发布为 `c685e51edcce3b132d791b04bdd5611c70847f46`。后续[源码与证据复核](URP-RUNTIME-REVIEW-c685e51e.md)核对了最终 242 个生产文件指纹，并收紧宿主退出、速度有效性及实际泡沫格式检查。下面的实机数字来自本轮归档工具；后续门禁改动没有计入这些通过数。
+
 ## 本地修复与最终复验
 
 已完成的生产修复包括：QueryBase 在应用退出和编辑器重载时等待自身的在飞请求并释放 GPU buffer；为 Unity 6000.6.2f1 Android 项目补足官方 Asset Delivery 依赖；URP 恢复相机时使用原始 projection 更新 native camera state，并分别恢复 GPU inverse 矩阵。
@@ -123,7 +125,7 @@ Editor 退出诊断刻意保留两个各有 7 个待处理原生请求的 provid
 
 21:32 的 Crest 修复包完整设备日志已无启动缺类错误，查询检查及七场景离屏截图通过，但 R32 整场景对照仍 FAIL，后续后台/立即退出诊断尚未执行。该失败日志单独保留，不能把这一轮列为完整 PASS。
 
-工具已进一步记录 requested / compatible / actual 格式，并确认临时 settings 仍被当前 manager 使用。若平台兼容回退不是 32 位浮点格式，明确 SKIP 整场景 R32 成本比较，不把它当作真实 R32 数据。32×32 原生 compute 衰减结果与整场景过滤、读写纹理的格式支持条件不同。
+工具已进一步记录 requested / compatible / actual 格式，并确认临时 settings 仍被当前 manager 使用。若平台兼容回退不是 32 位浮点格式，明确 SKIP 整场景 R32 成本比较，不把它当作真实 R32 数据。32×32 独立 compute 衰减直接创建目标，没有经过整场景 manager 的 `LoadStore | Sample | Linear` 兼容选择；它仍执行包含线性采样的生产 kernel。
 
 手机真实屏幕出现岛屿几何在天空中翻转，而同状态的 SingleCameraRequest 离屏截图正常。检查本地 URP 17.6 ScriptableRenderer.SetCameraMatrices 发现它使用非 GPU 的原始 projection 调用 SetViewProjectionMatrices，另行设置 GPU projection 的 inverse，并明确说明直接 SetViewAndProjectionMatrices 有 y-flip / winding 问题。Crest 原 RestoreCamera 只覆盖 global GPU 矩阵；本地已改为遵循 URP 的相机状态恢复，同时保留正确 inverse 及 world-to-camera handedness。该修改需要同时验收手机屏幕和离屏截图。
 
@@ -155,7 +157,7 @@ Android 首次主窗口截图检查发现另一处工具错误：ScreenCapture �
 
 Host 实际按 Home 进入后台，5 秒后恢复同一应用；pause transitions=2、查询积压峰值=4，恢复后取得有效生产波浪查询结果。立即退出时另行创建两个各有 7 个原生待处理请求的 provider，其中一个已 CleanUp；退出事件验证二者 CPU/GPU 资源和请求均释放，应用进程随后消失。
 
-R32 请求实际得到 `R16G16B16A16_SFloat`，与 manager 的 compatible format 一致，临时 settings 跨重建保持有效。因此明确 SKIP 整场景 R32 成本比较。单独 32×32、无过滤的 compute 衰减仍给出先前相同的 RFloat / RHalf 精度表征；它不证明整场景过滤纹理支持 R32，R16 的高频寿命误差也未修复。
+R32 请求实际得到 `R16G16B16A16_SFloat`，与 manager 的 compatible format 一致，临时 settings 跨重建保持有效。因此明确 SKIP 整场景 R32 成本比较。独立的 32×32、均匀输入、零 Flow compute 衰减仍给出先前相同的 RFloat / RHalf 精度表征。生产 `UpdateFoam` 通过 `SampleLod` 使用线性 sampler；均匀输入没有检验非均匀纹理的空间过滤质量，因此原“无过滤”表述已纠正。归档的小纹理诊断没有记录实际 `graphicsFormat`，也未经过 manager 的兼容选择，不能据此判断整场景回退具体由哪项格式能力造成。后续工具已补实际格式核验；本轮数据保留为请求 RFloat / RHalf 时的观测，R16 的高频寿命误差仍未修复。
 
 下表是相机修复后本次设备测量，每个配置采样 120 帧，GPU 样本按时间戳去重，所有配置均 120 个有效样本、0 invalid。Main / BoatWakes 为 HDR `B10G11R11_UFloatPack32`，Lakes 为 `R8G8B8A8_SRGB`，均实际 MSAA 1。模拟与船体继续运动，相机控制固定；Development Player、60 FPS cap。
 

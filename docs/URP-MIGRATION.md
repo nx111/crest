@@ -7,7 +7,7 @@ It does not include the commercial Crest URP package.
 ## Target and validation status
 
 - Project target: **Unity 6000.6.2f1 / URP 17.6.0**.
-- **Latest changes after `2aaeec77`** add specular filtering, stable foam integration/sampling,
+- **Rendering changes after `2aaeec77`** add specular filtering, stable foam integration/sampling,
   corrected water-path attenuation and caustics, followed by planar reflection filtering,
   explicit normal gradients, precise shallow-water caches and corrected underwater Fresnel blending.
   Later batches correct geometric wave normals, FFT loop spectrum/timing, Gerstner phase
@@ -23,13 +23,21 @@ It does not include the commercial Crest URP package.
   [reflection and shallow-water report](URP-REFLECTIONS-AND-SHALLOW-WATER.md), the
   [wave and foam stability report](URP-WAVES-AND-FOAM-STABILITY.md), and the latest
   [surface detail and wave query report](URP-SURFACE-DETAIL-AND-WAVE-QUERIES.md) for results, controls and limits.
-- **Latest runtime follow-up:** bounded asynchronous query submission, exact registrar
+- **Runtime follow-up:** bounded asynchronous query submission, exact registrar
   ownership, persistent coordinate compaction, safe output spans and callback-aware cleanup;
   test-runner startup errors now survive domain reload and Search errors remain fatal.
-  These new fixes have offline verification and need real Unity/device retesting.
   The [runtime follow-up report](URP-RUNTIME-FOLLOWUP.md) also records the first Windows
-  query-ring failure, RHalf foam lifetime drift, Android startup class error and
+  query-ring failure, RHalf foam lifetime drift, the original Android startup class error and
   the Android frame budget still unmet by the default examples.
+- **Latest production retest (`c685e51e`):** query shutdown now waits only for the
+  instance's own pending requests, the example supplies its missing Android startup
+  dependency, and camera restoration follows URP's native/GPU projection conventions.
+  The [retest report](URP-UNITY-RUNTIME-RETEST-9df1db9f.md) records 376 Editor assertions,
+  129 on each Windows API and 182 on Android Vulkan, with actual main-screen captures
+  and native shutdown checks. The final 242-file production manifest matches this
+  commit. The [independent review](URP-RUNTIME-REVIEW-c685e51e.md) preserves those results
+  and fixes diagnostic false-pass paths; the new diagnostic changes have offline
+  checks, not a new Unity/device run.
 - Renderer: **Universal Renderer with Render Graph enabled**, initially Forward,
   Linear color, MSAA off, render scale 1.0. The 2D Renderer is not supported.
 - **Headless Unity import, C# API binding, pipeline creation, example asset conversion
@@ -46,8 +54,10 @@ It does not include the commercial Crest URP package.
   and fixed cubemap. Foam, scene refraction, shadows and caustics were disabled in
   this comparison. See [URP-QUALITY-AUDIT.md](URP-QUALITY-AUDIT.md) for evidence and limits.
 - Full shader variant coverage and device/visual/performance validation beyond the
-  reported `90a93293` cases remain pending. The uploaded Android rendering checks pass,
-  but the complete startup log has a class-loading error and the measured frame budget fails.
+  reported cases remain pending. The final Android startup/exit log has no recorded
+  errors, but BoatWakes and Lakes still miss the 30 FPS budget even at render scale 0.5.
+  RHalf foam lifetime drift, Release/thermal measurements, XR and arbitrary camera
+  stacks are not resolved by the current retest.
 - This branch is ready for local compilation and visual review, not a declaration
   of tested visual equivalence or production readiness.
 
@@ -215,6 +225,9 @@ checks against baseline `8b56660e` are documented in
 [wave and foam verification](URP-WAVES-AND-FOAM-STABILITY.md#5-最终验证与复现).
 Later checks are documented in the [surface detail report](URP-SURFACE-DETAIL-AND-WAVE-QUERIES.md#5-最终验证与复现)
 and [runtime follow-up](URP-RUNTIME-FOLLOWUP.md#8-本轮验证与复测要求).
+The subsequent [Unity/device retest](URP-UNITY-RUNTIME-RETEST-9df1db9f.md) and
+[independent review](URP-RUNTIME-REVIEW-c685e51e.md) record the current production
+evidence and stricter host/diagnostic acceptance rules.
 
 See [static-check-results.md](static-check-results.md) for the results recorded
 for this migration. Reproduce actual GPU checks using

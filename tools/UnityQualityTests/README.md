@@ -1,35 +1,34 @@
 # Unity rendering quality checks
 
-`QualityRunner.cs` exercises the actual ocean shaders, Render Graph passes and
+`QualityRunner.cs` and its optional audit modules exercise the actual ocean shaders, Render Graph passes and
 camera rendering on a GPU. It targets Unity **6000.6.2f1 / URP 17.6.0**, the pinned
 versions of the example project. Earlier GPU results recorded on 2026-10-11 are
 in [URP-QUALITY-AUDIT.md](../../docs/URP-QUALITY-AUDIT.md).
-User-supplied tests of `90a93293` subsequently covered 322 Editor assertions and
-Windows D3D11/D3D12 and Android Vulkan Players; see the
-[runtime follow-up](../../docs/URP-RUNTIME-FOLLOWUP.md) for evidence and limits.
-The supplied expanded Editor/Player test sources are not yet in this repository,
-so this smaller runner does not reproduce all of those cases. The latest query
-lifecycle and runner startup fixes still require a new Unity/device run.
+The [latest retest](../../docs/URP-UNITY-RUNTIME-RETEST-9df1db9f.md) covers production
+commit `c685e51e`: 376 Editor assertions, 129 per Windows graphics API and 182 on
+Android Vulkan, including actual main-screen and native shutdown evidence. The
+expanded Editor/Player sources are now in this directory; exact tested versions
+are archived alongside the report. The [independent review](../../docs/URP-RUNTIME-REVIEW-c685e51e.md)
+tightens process/log acceptance, production velocity checks and actual foam-format
+diagnostics. These later diagnostic edits have offline checks and need a new
+Unity/device run; they do not increase the archived GPU assertion counts.
 
-The planar reflection, normal sampling, depth-cache and underwater Fresnel
-changes also need the [additional manual visual/performance checks](../../docs/URP-REFLECTIONS-AND-SHALLOW-WATER.md#6-本地画面与性能验收).
-This runner does not automate their mip/roughness sweeps, elevated shallow-water
-scenes, EXR round trips or reflection-resource recovery. Offline compilation and
-numerical results for that batch are recorded in the linked report.
+`-crestRealismAudit` enables `RealismAudit.cs`: selected RNM and per-phase foam HLSL
+contracts, FFT coordinate/time and Burst comparisons, production FFT loop/bake
+checks, foam-decay characterization and planar-reflection mip/resource recovery.
+The Player modules provide corresponding bounded HLSL/query checks plus optional
+device diagnostics. A finite readback or an image difference does not establish
+natural appearance or temporal stability.
 
-The wave-normal, FFT/Gerstner and foam changes require the
-[wave and foam manual checks](../../docs/URP-WAVES-AND-FOAM-STABILITY.md#6-本地画面与性能验收).
-This runner does not automate long-running Gerstner precision, FFT loop/bake/CPU-query
-comparisons, curved-flow transport, emitter-frequency sweeps, foam LOD/phase coverage
-or temporal foam-highlight evaluation. Re-bake existing FFT collision assets before
-reviewing them against the corrected waves.
-
-The latest detail-normal reorientation, per-phase local foam lighting and baked
-FFT query fixes require the [surface detail and query checks](../../docs/URP-SURFACE-DETAIL-AND-WAVE-QUERIES.md#6-本地画面与性能验收).
-This runner does not automate steep-wave detail orientation, local-light/Flow
-coverage sweeps, baked query coordinate/time boundaries or CPU query profiling.
-The Built-in comparison below now isolates common lighting with flat shading
-normals; it does not validate the new normal model's appearance.
+Remaining visual work includes elevated shallow-water/EXR checks, long-running
+Gerstner precision, nonuniform curved-flow transport and emitter-frequency sweeps,
+foam LOD/phase coverage, moving-camera glints and longer CPU/GPU profiling. See the
+[reflection](../../docs/URP-REFLECTIONS-AND-SHALLOW-WATER.md#6-本地画面与性能验收),
+[wave and foam](../../docs/URP-WAVES-AND-FOAM-STABILITY.md#6-本地画面与性能验收), and
+[surface detail](../../docs/URP-SURFACE-DETAIL-AND-WAVE-QUERIES.md#6-本地画面与性能验收)
+reports for scenarios. Re-bake existing FFT collision assets after the corrected
+wave spectrum/timing changes. The Built-in comparison below isolates common
+lighting with flat shading normals; it does not validate the new normal model's appearance.
 
 Run it **only in a disposable project copy**. The runner changes scenes, camera
 state, Graphics/Quality pipeline assignments, renderer settings and material
@@ -47,11 +46,25 @@ New-Item -ItemType Directory -Path $qualityProject | Out-Null
 foreach ($directory in @('Assets', 'Packages', 'ProjectSettings')) {
     Copy-Item -LiteralPath (Join-Path 'crest' $directory) -Destination $qualityProject -Recurse
 }
-New-Item -ItemType Directory -Path (Join-Path $qualityProject 'Assets/Editor') -Force | Out-Null
-Copy-Item -LiteralPath 'tools/UnityQualityTests/QualityRunner.cs' -Destination (Join-Path $qualityProject 'Assets/Editor/QualityRunner.cs')
+foreach ($directory in @('Assets/Editor', 'Assets/Resources')) {
+    New-Item -ItemType Directory -Path (Join-Path $qualityProject $directory) -Force | Out-Null
+}
+foreach ($file in @('QualityRunner.cs', 'RealismAudit.cs', 'RealismAudit.shader',
+                    'PlayerAuditBuilder.cs', 'AndroidAuditBuilder.cs', 'RunnerStartupProbe.cs')) {
+    Copy-Item -LiteralPath (Join-Path 'tools/UnityQualityTests' $file) -Destination (Join-Path $qualityProject 'Assets/Editor')
+}
+foreach ($file in @('PlayerAudit.cs', 'PlayerRetest.cs', 'PlayerGpuContracts.cs',
+                    'RuntimeQueryAudit.cs', 'PlayerTemporalAudit.cs')) {
+    Copy-Item -LiteralPath (Join-Path 'tools/UnityQualityTests' $file) -Destination (Join-Path $qualityProject 'Assets')
+}
+foreach ($file in @('RealismAudit.shader', 'AuditQueryCoordinates.compute')) {
+    Copy-Item -LiteralPath (Join-Path 'tools/UnityQualityTests' $file) -Destination (Join-Path $qualityProject 'Assets/Resources')
+}
 
 # Optional original Built-in surface comparison; requires the baseline Git commit.
 python tools/UnityQualityTests/prepare_builtin_reference.py $qualityProject
+# Required by the optional -crestRealismAudit same-geometry detail comparison.
+python tools/UnityQualityTests/prepare_realism_reference.py $qualityProject
 
 # Replace this editor path with your Unity 6000.6.2f1 installation.
 $unityEditor = 'E:/Games/Unity/Editor/6000.6.2f1/Editor/Unity.exe'
@@ -59,6 +72,7 @@ $qualityLog = Join-Path $qualityProject 'quality-gpu.log'
 $qualityProcess = Start-Process -FilePath $unityEditor -ArgumentList @(
     '-force-d3d11', '-projectPath', $qualityProject,
     '-crestSpecularAA', # Optional diagnostic; remove to skip its extra captures.
+    '-crestRealismAudit', '-crestQueryAudit', '-crestQuitAudit', '-crestLeakStacks',
     '-executeMethod', 'QualityRunner.Start', '-logFile', $qualityLog
 ) -WindowStyle Normal -PassThru
 $qualityProcess.Id
@@ -68,25 +82,42 @@ The initial import may take several minutes. Do **not** add `-batchmode`,
 `-nographics` or `-quit`: the test enters Play Mode to create Crest's ocean tiles,
 needs a graphics device, and exits itself after the captures. A successful run
 prints `CREST_QUALITY_RESULT PASS`, writes `QualityCaptures/results.txt` and PNGs,
-and exits with code 0. A failed assertion or rendering exception exits with code 1.
+and exits with code 0. A failed regular assertion or rendering exception exits with code 1.
 The runner installs its log listener before opening scenes, defers that initialization
 until the editor UI is ready, and preserves startup failures across the Play Mode
 domain reload. Inspect the complete process log after exit as well as the results
-file: native shutdown leaks can occur after the managed test reports PASS.
+file: native shutdown leaks can occur after the managed test reports PASS. With
+`-crestQuitAudit`, require the final successful shutdown assertion in `results.txt`
+and `CREST_QUERY_QUIT_AUDIT PASS` without FAIL in the complete process log. A managed
+PASS or exit code 0 alone is insufficient because the quit probe runs later.
+
+`prepare_runtime_retest.py --label <new-label> <cached-project>` can update a stopped,
+existing `crest-validation-*` diagnostic copy with a Library cache; it is not the
+fresh-project setup command. Preserve each run's results and installed tool snapshot.
 
 For the native query and shutdown audit, copy `RuntimeQueryAudit.cs` outside Editor
-and `AuditQueryCoordinates.compute` into `Assets/Resources` in the disposable copy.
+and `AuditQueryCoordinates.compute` into `Assets/Resources` in the disposable copy
+(included in the complete setup above).
 Add `-crestQueryOnly -crestQuitAudit -crestLeakStacks` to run just these checks.
 The shutdown audit deliberately leaves a live provider and an already-cleaned
 provider with pending native requests, then verifies their resources in the quit
 event. Full quality checks remain the default when `-crestQueryOnly` is absent.
 
-The Player audit additionally uses `PlayerAudit.cs`, `PlayerRetest.cs` and
-`PlayerGpuContracts.cs` outside Editor; install its builders in `Assets/Editor`.
+The Player audit uses `PlayerAudit.cs`, `PlayerRetest.cs`, `PlayerGpuContracts.cs`,
+`RuntimeQueryAudit.cs` and `PlayerTemporalAudit.cs` outside Editor; install its
+builders in `Assets/Editor` and the diagnostic shader/compute in `Assets/Resources`.
 Use `-crestQueryAudit -crestQuitAudit -crestFoamStorage -crestPerformanceAB` for
 the extended diagnostics. Android `run_android_audit.py` accepts these via `--extra`,
 checks the app's own logcat including native teardown, and reconnects a dropped
-Wi-Fi ADB endpoint. `-crestBackgroundAudit` exercises Home/resume on that test app.
+Wi-Fi ADB endpoint. Keep `android_audit_checks.py` beside both Android host scripts.
+The host requires confirmed process exit, a successfully retrieved final file with
+exactly one `RESULT: PASS`, no failed assertions, and a retained early Unity
+`Context Type: ActivityOrService` startup line. This marker precedes the known Java
+class probe; later engine-initialization lines alone cannot prove startup coverage.
+Requested quit checks must also appear in both the final file and PID log. Timeouts,
+unverifiable ADB replies, missing/truncated evidence or a replaced app PID fail
+acceptance. Errors are saved to `acceptance-errors.txt`; `full-log-errors.txt` retains
+the log-specific errors. `-crestBackgroundAudit` exercises Home/resume on that test app.
 Run all Unity builds serially, especially on a mechanical disk.
 
 Add `-crestScreenAudit` to save the actual game screen before and after the first
@@ -115,9 +146,18 @@ figures appropriately. Image-difference scores alone do not certify stability.
 The performance audit records requested, compatible and actual foam formats.
 Its temporary settings survive ocean reconstruction and are restored afterward.
 If the device selects a half-float fallback for an R32 request, the full-scene
-R32 cost comparison is explicitly skipped. The separate small compute decay
-test has different filtering/texture support requirements and does not establish
-that the full ocean's R32 texture is supported.
+R32 cost comparison is explicitly skipped. The separate 32x32 compute decay test
+uses uniform input and zero Flow, but still executes the production linear sampler.
+It bypasses the manager's compatibility selection and does not establish support
+for nonuniform filtering or the full ocean's R32 texture. It now checks creation
+and actual `graphicsFormat` of both ping-pong targets; a fallback explicitly skips
+that requested storage label. Only verified `R32_SFloat` targets use the R32 error
+threshold. The archived Android run predates these small-target format checks.
+
+The production wave-query audit resets displacement/normal/velocity outputs to
+NaN before each call and requires `QueryStatus.OK`. `RetrieveSucceeded` alone
+does not reject unavailable or invalid velocity data; untouched zero outputs must
+not pass as valid velocities.
 
 `MinimalAndroidBuilder.cs`, `MinimalAndroidLifetime.cs` and `run_minimal_android.py`
 provide a separate empty-project Android startup control, without Crest or URP.
@@ -125,6 +165,21 @@ The example project's `Development/Editor/AndroidAssetPackDependency.cs` works
 around the confirmed Unity 6000.6.2f1 AssetPackManager startup error by adding the
 official Play Asset Delivery 2.3.0 dependency if it is absent. It applies only to
 that engine version; keep it in the project when building the Android example.
+An existing game with Play/PAD plugins needs its final Gradle dependency graph
+checked before adopting this example-specific hook: it detects a directly declared
+asset-delivery dependency, not every transitive/local AAR or old monolithic Play Core
+library. Follow [Google's migration instructions](https://developer.android.com/guide/playcore#common-migration-steps)
+when old Play Core libraries are present.
+
+Host acceptance regressions can run without a phone or Unity:
+
+```text
+python -m unittest discover -s tools/UnityQualityTests -p test_android_audit_checks.py -v
+```
+
+They exercise the real CLI scripts with fake ADB replies, exit/transport/result/log
+failure cases, and content replay of archived positive/negative Android logs. This
+does not constitute a new device run or independently observe archived process exit.
 
 If the reference extractor was omitted, the run explicitly reports the Built-in
 comparison as skipped. The extractor copies the original `Ocean.shader` and its
@@ -203,10 +258,12 @@ startup handling in a disposable project with `UserSettings/Search.index` moved
 to a backup name, and verify an injected Search error remains fatal across reload.
 Keep checking the entire Editor/Player process log from the host: errors before
 `Start`, during an unobserved reload interval, or at shutdown are outside the
-managed listener's complete coverage. In particular, the supplied Android log
-has a startup Java class error even though its managed rendering checks pass.
+managed listener's complete coverage. The original Android baseline had a startup
+Java class error despite managed rendering PASS; the final `c685e51e` device log
+includes early startup and shutdown with no recorded errors after the dependency fix.
 
 These checks do not establish full Built-in visual equivalence, all shader
 variants, player stripping, performance budgets, volume/stencil edge quality,
-full Forward+/Deferred behavior, D3D12, mobile, XR, dynamic resolution or arbitrary
-camera-stack compatibility. Reproduce those separately for the intended game.
+full Forward+/Deferred behavior, every D3D12/mobile path, XR, dynamic resolution or
+arbitrary camera-stack compatibility. The report covers specific D3D11/D3D12/Vulkan
+cases; reproduce additional configurations separately for the intended game.

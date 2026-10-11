@@ -32,7 +32,23 @@ public sealed partial class PlayerAudit
                     { dimension = TextureDimension.Tex2DArray, volumeDepth = 1, enableRandomWrite = true }).ToArray();
                 try
                 {
-                    foreach (var target in targets) target.Create();
+                    for (var targetIndex = 0; targetIndex < targets.Length; targetIndex++)
+                    {
+                        var target = targets[targetIndex];
+                        var created = target.Create();
+                        Check(created && target.IsCreated(), "Device foam target created: requested=" + format
+                            + "; actual=" + target.graphicsFormat + "; frequency=" + frequency + " Hz; target=" + targetIndex);
+                    }
+                    var expectedFormat = format == RenderTextureFormat.RFloat
+                        ? UnityEngine.Experimental.Rendering.GraphicsFormat.R32_SFloat
+                        : UnityEngine.Experimental.Rendering.GraphicsFormat.R16_SFloat;
+                    if (targets.Any(target => target.graphicsFormat != expectedFormat))
+                    {
+                        _results.Add("SKIP: Device foam storage " + format + ", " + frequency + " Hz: requested=" + expectedFormat
+                            + "; actual targets=" + string.Join(",", targets.Select(target => target.graphicsFormat.ToString()))
+                            + "; fallback formats cannot validate this storage precision label.");
+                        continue;
+                    }
                     using (var command = new CommandBuffer())
                     {
                         command.SetComputeBufferParam(foam, kernel, "_CrestCascadeData", cascade);
@@ -63,8 +79,10 @@ public sealed partial class PlayerAudit
                     Check(!request.hasError, "Device production foam readback: " + format + ", " + frequency + " Hz");
                     var value = request.GetData<float>()[size / 2 * size + size / 2];
                     var error = value / Mathf.Exp(-1.6f) - 1;
-                    Check(Finite(value) && (format != RenderTextureFormat.RFloat || Mathf.Abs(error) < 0.001f),
-                        "Device foam storage " + format + ", " + frequency + " Hz: value=" + value + "; signed error=" + error);
+                    Check(Finite(value) && (targets[0].graphicsFormat != UnityEngine.Experimental.Rendering.GraphicsFormat.R32_SFloat
+                        || Mathf.Abs(error) < 0.001f),
+                        "Device foam storage " + format + ", " + frequency + " Hz: actual=" + targets[0].graphicsFormat
+                        + "; value=" + value + "; signed error=" + error);
                 }
                 finally { foreach (var target in targets) { target.Release(); Object.Destroy(target); } }
             }

@@ -2,7 +2,7 @@
 
 日期：2026-10-11。目标版本：**Unity 6000.6.2f1 / URP 17.6.0**。
 
-后续实测及本地修复见 [9df1db9f Unity / Player 复测](URP-UNITY-RUNTIME-RETEST-9df1db9f.md)：原生查询积压与运行期间清理通过，但发现立即退出时的 GPU buffer 回收缺口，以及 Unity 6000.6.2f1 的 Android AssetPackManager 启动依赖错误；两项已实施修复并进行跨平台复验。下面保留原始基线分析。
+后续实测及修复见 [9df1db9f Unity / Player 复测](URP-UNITY-RUNTIME-RETEST-9df1db9f.md)：原生查询积压与运行期间清理通过，但发现立即退出时的 GPU buffer 回收缺口、Unity 6000.6.2f1 的 Android AssetPackManager 启动依赖错误，以及实际主屏幕的相机矩阵翻转；三项已在 `c685e51e` 修复并进行跨平台复验。扩展测试源码和原始日志现已入库；后续验收门禁修正见 [独立复核](URP-RUNTIME-REVIEW-c685e51e.md)。下面保留第五轮提交时的原始基线分析与当时的验证边界。
 本轮代码基线及用户实测提交为 [`90a93293`](https://github.com/nx111/crest/commit/90a93293d70f73df224579c6373e12c70d55a697)。
 
 实机结果支持保留前四轮的法线、泡沫光照及烘焙波浪查询修正，也暴露了查询回读积压、半精度泡沫寿命偏差和移动端帧时问题。
