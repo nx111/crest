@@ -384,9 +384,11 @@ namespace Crest
                 return false;
             }
 
+            var builtIn = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline == null;
             var oldShadowDistance = 0f;
 
             // Built-in only.
+            if (builtIn)
             {
                 // Stop shadow passes from executing.
                 oldShadowDistance = QualitySettings.shadowDistance;
@@ -421,6 +423,7 @@ namespace Crest
                 QualitySettings.maximumLODLevel = oldMaximumLodLevel;
 
                 // Built-in only.
+                if (builtIn)
                 {
                     QualitySettings.shadowDistance = oldShadowDistance;
                 }

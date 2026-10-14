@@ -35,8 +35,9 @@ namespace Crest
         {
             _copy = copy;
             renderPassEvent = at;
-            ConfigureInput(ScriptableRenderPassInput.Color | ScriptableRenderPassInput.Depth);
-            requiresIntermediateTexture = true;
+            // The copy reads active color directly; Color input would also request URP's opaque-color copy.
+            // Drawing the excluded transparents uses camera attachments and needs no sampled depth/color input.
+            requiresIntermediateTexture = copy;
         }
 
         public override void RecordRenderGraph(RenderGraph graph, ContextContainer frameData)

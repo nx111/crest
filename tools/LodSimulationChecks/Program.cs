@@ -240,6 +240,8 @@ namespace UnityEngine
     {
         public Material(Shader shader) { }
         public void SetFloat(int id, float value) { }
+        public void EnableKeyword(string keyword) { }
+        public void DisableKeyword(string keyword) { }
     }
     public struct Matrix4x4 { public static Matrix4x4 identity => default; }
     public struct Rect

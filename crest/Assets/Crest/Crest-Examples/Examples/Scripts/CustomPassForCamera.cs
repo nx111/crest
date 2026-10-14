@@ -32,8 +32,7 @@ namespace Crest.Examples
             _currentEvent = Event;
             if (GraphicsSettings.currentRenderPipeline != null)
             {
-                CrestUniversalRendererFeature.BeforeSceneRendering -= OnURPBeforeScene;
-                CrestUniversalRendererFeature.BeforeSceneRendering += OnURPBeforeScene;
+                SubscribeURP();
                 return;
             }
 
@@ -41,7 +40,45 @@ namespace Crest.Examples
             Camera.onPreRender += OnBeforeRender;
         }
 
-        void OnURPBeforeScene(CommandBuffer buffer, Camera camera, RenderTextureDescriptor descriptor)
+        void SubscribeURP()
+        {
+            UnsubscribeURP();
+            switch ((CameraEvent)_currentEvent)
+            {
+                case CameraEvent.BeforeDepthTexture:
+                case CameraEvent.BeforeDepthNormalsTexture:
+                case CameraEvent.BeforeForwardOpaque:
+                    CrestUniversalRendererFeature.BeforeSceneRendering += ExecuteURP;
+                    break;
+                case CameraEvent.AfterDepthTexture:
+                case CameraEvent.AfterDepthNormalsTexture:
+                    CrestUniversalRendererFeature.AfterDepthRendering += ExecuteURP;
+                    break;
+                case CameraEvent.AfterForwardOpaque:
+                case CameraEvent.BeforeForwardAlpha:
+                    CrestUniversalRendererFeature.AfterOpaqueRendering += ExecuteURP;
+                    break;
+                default:
+                    Debug.LogWarning($"Crest: Camera event {(CameraEvent)_currentEvent} has no URP callback.", this);
+                    break;
+            }
+        }
+
+        void UnsubscribeURP()
+        {
+            CrestUniversalRendererFeature.BeforeSceneRendering -= ExecuteURP;
+            CrestUniversalRendererFeature.AfterDepthRendering -= ExecuteURP;
+            CrestUniversalRendererFeature.AfterOpaqueRendering -= ExecuteURP;
+        }
+
+        void LateUpdate()
+        {
+            if (GraphicsSettings.currentRenderPipeline == null || _currentEvent == Event) return;
+            _currentEvent = Event;
+            SubscribeURP();
+        }
+
+        void ExecuteURP(CommandBuffer buffer, Camera camera, RenderTextureDescriptor descriptor)
         {
             if (Camera.main == camera || camera.cameraType == CameraType.SceneView)
                 Execute(buffer, camera, descriptor);
@@ -50,7 +87,7 @@ namespace Crest.Examples
 
         void OnDisable()
         {
-            CrestUniversalRendererFeature.BeforeSceneRendering -= OnURPBeforeScene;
+            UnsubscribeURP();
             Camera.onPreRender -= OnBeforeRender;
             CleanCameras();
             _buffer?.Release();

@@ -14,12 +14,27 @@ namespace Crest
         internal void DeclareURPTextures(RenderGraph graph, IUnsafeRenderGraphBuilder builder,
             RenderTextureDescriptor descriptor, bool write)
         {
-            if (_overlay) return;
+            var volume = !_overlay && _mode != Mode.FullScreen && _volumeGeometry != null;
+            if (write)
+            {
+                // Globals belong to the current camera/mode, including modes that do not render volume faces.
+                if (!volume) builder.SetGlobalTextureAfterPass(graph.defaultResources.blackTextureXR, ShaderIDs.s_CrestWaterVolumeFrontFaceTexture);
+                if (!volume || _mode == Mode.Portal) builder.SetGlobalTextureAfterPass(graph.defaultResources.blackTextureXR, ShaderIDs.s_CrestWaterVolumeBackFaceTexture);
+            }
+            if (_overlay)
+            {
+                if (write)
+                {
+                    builder.SetGlobalTextureAfterPass(graph.defaultResources.blackTextureXR, ShaderIDs.s_CrestOceanMaskTexture);
+                    builder.SetGlobalTextureAfterPass(graph.defaultResources.blackTextureXR, ShaderIDs.s_CrestOceanMaskDepthTexture);
+                }
+                return;
+            }
             SetUpMaskTextures(descriptor);
-            if (_mode != Mode.FullScreen && _volumeGeometry != null) SetUpVolumeTextures(descriptor);
+            if (volume) SetUpVolumeTextures(descriptor);
             if (!_maskRT.IsCreated()) _maskRT.Create();
             if (!_depthRT.IsCreated()) _depthRT.Create();
-            if (_mode != Mode.FullScreen && _volumeGeometry != null)
+            if (volume)
             {
                 if (!_volumeFrontFaceRT.IsCreated()) _volumeFrontFaceRT.Create();
                 if (_mode != Mode.Portal && !_volumeBackFaceRT.IsCreated()) _volumeBackFaceRT.Create();
@@ -28,8 +43,6 @@ namespace Crest
             {
                 _urpMask = RTHandles.Alloc(_maskRT);
                 _urpDepth = RTHandles.Alloc(_depthRT);
-                _urpVolumeFront = RTHandles.Alloc(_volumeFrontFaceRT);
-                _urpVolumeBack = RTHandles.Alloc(_volumeBackFaceRT);
             }
             var access = write ? AccessFlags.ReadWrite : AccessFlags.Read;
             var mask = graph.ImportTexture(_urpMask);
@@ -41,13 +54,16 @@ namespace Crest
                 builder.SetGlobalTextureAfterPass(mask, ShaderIDs.s_CrestOceanMaskTexture);
                 builder.SetGlobalTextureAfterPass(depth, ShaderIDs.s_CrestOceanMaskDepthTexture);
             }
-            if (_mode != Mode.FullScreen && _volumeGeometry != null)
+            if (volume)
             {
+                // Wrap only configured targets. ImportTexture reads the current RenderTexture descriptor on resize.
+                if (_urpVolumeFront == null) _urpVolumeFront = RTHandles.Alloc(_volumeFrontFaceRT);
                 var front = graph.ImportTexture(_urpVolumeFront);
                 builder.UseTexture(front, access);
                 if (write) builder.SetGlobalTextureAfterPass(front, ShaderIDs.s_CrestWaterVolumeFrontFaceTexture);
                 if (_mode != Mode.Portal)
                 {
+                    if (_urpVolumeBack == null) _urpVolumeBack = RTHandles.Alloc(_volumeBackFaceRT);
                     var back = graph.ImportTexture(_urpVolumeBack);
                     builder.UseTexture(back, access);
                     if (write) builder.SetGlobalTextureAfterPass(back, ShaderIDs.s_CrestWaterVolumeBackFaceTexture);

@@ -313,7 +313,6 @@ namespace Crest
                 _heightAboveWater = _camera.transform.position.y - waterHeight;
             }
 
-#if UNITY_EDITOR
             if (_currentOverlay != _overlay)
             {
                 OnDisable();
@@ -321,7 +320,6 @@ namespace Crest
 
                 _currentOverlay = _overlay;
             }
-#endif
 
             if (GraphicsSettings.currentRenderPipeline == null && _enableShaderAPI != _currentEnableShaderAPI && _underwaterEffectCommandBuffer != null)
             {

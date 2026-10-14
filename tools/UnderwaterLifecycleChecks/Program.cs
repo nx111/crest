@@ -11,6 +11,11 @@ namespace UnityEngine
     public class Object { public bool Destroyed; }
     public class Material : Object { }
     public class ComputeShader : Object { }
+    public static class Shader
+    {
+        public static readonly Dictionary<int, Object> Globals = new Dictionary<int, Object>();
+        public static void SetGlobalTexture(int id, Object texture) => Globals[id] = texture;
+    }
     public class RenderTexture : Object
     {
         public bool Created = true;
@@ -76,6 +81,11 @@ namespace Crest
     }
     public partial class UnderwaterRenderer
     {
+        static class ShaderIDs
+        {
+            public const int s_CrestOceanMaskTexture = 1, s_CrestOceanMaskDepthTexture = 2,
+                s_CrestWaterVolumeFrontFaceTexture = 3, s_CrestWaterVolumeBackFaceTexture = 4;
+        }
         public static UnderwaterRenderer Instance { get; private set; }
         internal static Camera s_PrimaryCamera;
         public bool isActiveAndEnabled = true;
@@ -268,7 +278,9 @@ namespace Crest
                 {
                     var renderer = new UnderwaterRenderer();
                     var resources = renderer.Allocate();
+                    for (int id = 1; id <= 4; id++) Shader.Globals[id] = resources.Owned.OfType<RenderTexture>().First();
                     renderer.DisableMask();
+                    Check.That(Enumerable.Range(1, 4).All(id => Shader.Globals[id] == null), "Disable left released water targets globally bound");
                     Check.That(resources.Owned.All(value => !value.Destroyed) && resources.Buffers.All(value => value.Releases == 0), "Disable destroyed reusable objects");
                     Check.That(resources.Owned.OfType<RenderTexture>().All(value => !value.Created), "Disable kept texture hardware allocations");
                     renderer.DestroyComponent();

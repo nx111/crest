@@ -15,11 +15,20 @@ namespace Crest
 
         // Example/custom inputs can record commands after the water mask, before scene depth/opaques.
         public static event System.Action<CommandBuffer, Camera, RenderTextureDescriptor> BeforeSceneRendering;
+        public static event System.Action<CommandBuffer, Camera, RenderTextureDescriptor> AfterDepthRendering;
+        public static event System.Action<CommandBuffer, Camera, RenderTextureDescriptor> AfterOpaqueRendering;
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        static void ResetEvents() => BeforeSceneRendering = null;
+        static void ResetEvents()
+        {
+            BeforeSceneRendering = null;
+            AfterDepthRendering = null;
+            AfterOpaqueRendering = null;
+        }
         static readonly int s_MainLightShadowCascadeCount = Shader.PropertyToID("_CrestMainLightShadowCascadeCount");
         CrestPass _prepare, _before, _after;
         CrestRefractionPass _refractionObjects, _refractionCopy;
+        CrestCallbackPass _afterDepth, _afterOpaque;
+        CrestReflectionCullPass _reflectionInvert, _reflectionRestore;
 
         public override void Create()
         {
@@ -28,6 +37,10 @@ namespace Crest
             _before = new CrestPass(1, (RenderPassEvent)((int)RenderPassEvent.BeforeRenderingTransparents - 1));
             _refractionCopy = new CrestRefractionPass(true, RenderPassEvent.BeforeRenderingTransparents);
             _after = new CrestPass(2, RenderPassEvent.BeforeRenderingPostProcessing);
+            _afterDepth = new CrestCallbackPass(true, RenderPassEvent.AfterRenderingPrePasses);
+            _afterOpaque = new CrestCallbackPass(false, RenderPassEvent.AfterRenderingOpaques);
+            _reflectionInvert = new CrestReflectionCullPass(true);
+            _reflectionRestore = new CrestReflectionCullPass(false);
         }
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
@@ -36,6 +49,12 @@ namespace Crest
             if (camera.cameraType == CameraType.Preview ||
                 renderingData.cameraData.cameraTargetDescriptor.graphicsFormat == UnityEngine.Experimental.Rendering.GraphicsFormat.None)
                 return;
+
+            if (camera == CrestRenderRequest.ReflectionCamera)
+            {
+                renderer.EnqueuePass(_reflectionInvert);
+                renderer.EnqueuePass(_reflectionRestore);
+            }
 
             // These layers replace the renderer's ordinary transparent draw, including when no ocean is active,
             // in reflections and on overlay cameras. Otherwise excluded objects would disappear in those views.
@@ -48,10 +67,17 @@ namespace Crest
                 renderingData.cameraData.renderType == CameraRenderType.Overlay) return;
 
             renderer.EnqueuePass(_prepare);
-            // Always request depth and opaque color: the ocean surface needs both even without underwater.
-            renderer.EnqueuePass(_before);
-            if (_refractedLayers.value != 0) renderer.EnqueuePass(_refractionCopy);
             var underwater = UnderwaterRenderer.Get(camera);
+            var earlyUnderwater = underwater != null && underwater.isActiveAndEnabled && underwater.IsActive &&
+                underwater.EnableShaderAPI && Helpers.MaskIncludesLayer(camera.cullingMask, underwater._layer);
+            // The custom refraction copy already supplies surface background color. Early fog also refreshes
+            // opaque color for shader API consumers, so retain that input only when it is actually used.
+            _before.ConfigureInput(ScriptableRenderPassInput.Depth |
+                ((_refractedLayers.value == 0 || earlyUnderwater) ? ScriptableRenderPassInput.Color : ScriptableRenderPassInput.None));
+            renderer.EnqueuePass(_before);
+            if (AfterDepthRendering != null) renderer.EnqueuePass(_afterDepth);
+            if (AfterOpaqueRendering != null) renderer.EnqueuePass(_afterOpaque);
+            if (_refractedLayers.value != 0) renderer.EnqueuePass(_refractionCopy);
             if (underwater != null && underwater.isActiveAndEnabled && !underwater.EnableShaderAPI)
                 renderer.EnqueuePass(_after);
         }
@@ -77,7 +103,7 @@ namespace Crest
                 renderPassEvent = at;
                 if (stage != 0)
                 {
-                    ConfigureInput(ScriptableRenderPassInput.Depth | ScriptableRenderPassInput.Color);
+                    ConfigureInput(ScriptableRenderPassInput.Depth);
                     requiresIntermediateTexture = true;
                 }
             }
@@ -130,6 +156,13 @@ namespace Crest
                     }
                     if (underwater != null && underwater.IsActive)
                         underwater.DeclareURPTextures(graph, builder, descriptor, _stage == 0);
+                    else if (_stage == 0)
+                    {
+                        builder.SetGlobalTextureAfterPass(graph.defaultResources.blackTextureXR, UnderwaterRenderer.ShaderIDs.s_CrestOceanMaskTexture);
+                        builder.SetGlobalTextureAfterPass(graph.defaultResources.blackTextureXR, UnderwaterRenderer.ShaderIDs.s_CrestOceanMaskDepthTexture);
+                        builder.SetGlobalTextureAfterPass(graph.defaultResources.blackTextureXR, UnderwaterRenderer.ShaderIDs.s_CrestWaterVolumeFrontFaceTexture);
+                        builder.SetGlobalTextureAfterPass(graph.defaultResources.blackTextureXR, UnderwaterRenderer.ShaderIDs.s_CrestWaterVolumeBackFaceTexture);
+                    }
                     // Crest's LOD textures are persistent external simulation resources.
                     // Preserve the pass and ordering across global texture/keyword updates.
                     builder.AllowPassCulling(false);
@@ -149,15 +182,18 @@ namespace Crest
                             cmd.DisableShaderKeyword("CREST_UNDERWATER_BEFORE_TRANSPARENT");
                             var ocean = OceanRenderer.Instance;
                             if (ocean == null) return;
-                            foreach (var tile in ocean.Tiles) tile.BindOceanData(pass.camera);
                             if (pass.camera == ocean.ViewCamera && ocean._lodDataShadow != null &&
                                 ocean._lodDataShadow.enabled && ocean._lodDataShadow.BufCopyShadowMap != null && LodDataMgrShadow.s_processData)
                                 ocean._lodDataShadow.BuildCommandBuffer(ocean, cmd);
                             RestoreCamera(pass, cmd);
                             if (pass.underwater != null && pass.underwater.IsActive)
                                 pass.underwater.RecordURPMask(cmd, pass.camera, pass.descriptor);
-                            BeforeSceneRendering?.Invoke(cmd, pass.camera, pass.descriptor);
                             RestoreCamera(pass, cmd);
+                            if (BeforeSceneRendering != null)
+                            {
+                                BeforeSceneRendering.Invoke(cmd, pass.camera, pass.descriptor);
+                                RestoreCamera(pass, cmd);
+                            }
                         }
                         else if (pass.effect)
                         {
@@ -193,6 +229,52 @@ namespace Crest
                 cmd.SetGlobalMatrix("unity_MatrixInvP", inverseProjection);
                 cmd.SetGlobalMatrix("unity_MatrixInvVP", inverseView * inverseProjection);
                 cmd.SetViewport(new Rect(0, 0, pass.descriptor.width, pass.descriptor.height));
+            }
+        }
+
+        sealed class CrestCallbackPass : ScriptableRenderPass
+        {
+            readonly bool _afterDepth;
+            sealed class PassData
+            {
+                public Camera camera;
+                public RenderTextureDescriptor descriptor;
+                public TextureHandle color, depth;
+                public System.Action<CommandBuffer, Camera, RenderTextureDescriptor> callback;
+            }
+
+            public CrestCallbackPass(bool afterDepth, RenderPassEvent at)
+            {
+                _afterDepth = afterDepth;
+                renderPassEvent = at;
+            }
+
+            public override void RecordRenderGraph(RenderGraph graph, ContextContainer frameData)
+            {
+                var camera = frameData.Get<UniversalCameraData>();
+                var resources = frameData.Get<UniversalResourceData>();
+                using (var builder = graph.AddUnsafePass<PassData>("Crest camera callbacks", out var data))
+                {
+                    data.camera = camera.camera;
+                    data.descriptor = camera.cameraTargetDescriptor;
+                    data.color = resources.activeColorTexture;
+                    data.depth = resources.activeDepthTexture;
+                    data.callback = _afterDepth ? AfterDepthRendering : AfterOpaqueRendering;
+                    builder.UseTexture(data.color, AccessFlags.ReadWrite);
+                    builder.UseTexture(data.depth, AccessFlags.ReadWrite);
+                    builder.UseAllGlobalTextures(true);
+                    builder.AllowPassCulling(false);
+                    builder.AllowGlobalStateModification(true);
+                    builder.SetRenderFunc((PassData pass, UnsafeGraphContext context) =>
+                    {
+                        // Depth-writing callbacks must target the scene attachments, never the water mask.
+                        context.cmd.SetRenderTarget(pass.color, pass.depth);
+                        var cmd = CommandBufferHelpers.GetNativeCommandBuffer(context.cmd);
+                        pass.callback?.Invoke(cmd, pass.camera, pass.descriptor);
+                        context.cmd.SetRenderTarget(pass.color, pass.depth);
+                        cmd.SetViewport(new Rect(0, 0, pass.descriptor.width, pass.descriptor.height));
+                    });
+                }
             }
         }
     }

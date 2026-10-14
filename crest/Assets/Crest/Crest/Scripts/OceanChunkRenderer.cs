@@ -148,6 +148,12 @@ namespace Crest
             // OnWillRenderObject for SRPs. BeginCameraRendering is called for each active camera in every frame.
             // OnWillRenderObject is called after BeginCameraRendering for the current camera so this works.
             _currentCamera = camera;
+            // Bind before URP records renderer lists. The water mask also draws tiles culled from the scene view.
+            var ocean = OceanRenderer.Instance;
+            if (ocean != null)
+            {
+                foreach (var tile in ocean.Tiles) tile.BindOceanData(camera);
+            }
         }
 
         // Used by the ocean mask system if we need to render the ocean mask in situations

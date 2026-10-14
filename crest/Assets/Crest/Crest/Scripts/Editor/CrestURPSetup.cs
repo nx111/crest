@@ -126,7 +126,8 @@ namespace Crest
                 AssetDatabase.CreateAsset(pipeline, Folder + "/CrestPipeline.asset");
             }
             pipeline.supportsCameraDepthTexture = true;
-            pipeline.supportsCameraOpaqueTexture = true;
+            // Crest requests opaque color per camera when it needs it. A global request duplicates refraction copies.
+            pipeline.supportsCameraOpaqueTexture = false;
             pipeline.maxAdditionalLightsCount = 8;
             // URP exposes these setters internally; use its serialized asset settings in the editor.
             var options = new SerializedObject(pipeline);
@@ -208,8 +209,8 @@ namespace Crest
         {
             if (!(GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset pipeline))
                 throw new BuildFailedException("Crest urp branch requires URP. Run Crest > URP > Create and Assign Pipeline, or configure your existing URP asset.");
-            if (!pipeline.supportsCameraDepthTexture || !pipeline.supportsCameraOpaqueTexture)
-                throw new BuildFailedException("Enable Depth Texture and Opaque Texture on the active URP asset.");
+            if (!pipeline.supportsCameraDepthTexture)
+                throw new BuildFailedException("Enable Depth Texture on the active URP asset.");
 #if !UNITY_6000_4_OR_NEWER
             var settings = GraphicsSettings.GetRenderPipelineSettings<RenderGraphSettings>();
             if (settings != null && settings.enableRenderCompatibilityMode)

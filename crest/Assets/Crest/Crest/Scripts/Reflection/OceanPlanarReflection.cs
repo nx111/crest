@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 
 namespace Crest
@@ -101,6 +102,7 @@ namespace Crest
 
         [SerializeField] LayerMask _reflectionLayers = 1;
         [SerializeField] bool _disableOcclusionCulling = true;
+        [Tooltip("Built-in pipeline only. URP lighting is configured by its pipeline asset.")]
         [SerializeField] bool _disablePixelLights = true;
         [SerializeField] bool _disableShadows = false;
         [Min(1)] [SerializeField] int _textureSize = 256;
@@ -297,21 +299,21 @@ namespace Crest
             var waterWasActive = waterRoot.activeSelf;
             waterRoot.SetActive(false);
 
-            // Invert culling because view is mirrored
+            // URP reverses only scene draws, after its shadow passes.
+            var builtIn = GraphicsSettings.currentRenderPipeline == null;
             bool oldCulling = GL.invertCulling;
-            GL.invertCulling = !oldCulling;
-
-            // Optionally disable pixel lights for reflection/refraction
             int oldPixelLightCount = QualitySettings.pixelLightCount;
-            if (_disablePixelLights) QualitySettings.pixelLightCount = 0;
-
-            // Optionally disable shadows for reflection/refraction
             var oldShadowQuality = QualitySettings.shadows;
-            if (_disableShadows) QualitySettings.shadows = UnityEngine.ShadowQuality.Disable;
+            if (builtIn)
+            {
+                GL.invertCulling = !oldCulling;
+                if (_disablePixelLights) QualitySettings.pixelLightCount = 0;
+                if (_disableShadows) QualitySettings.shadows = UnityEngine.ShadowQuality.Disable;
+            }
 
             try
             {
-                CrestRenderRequest.Render(_camReflections, _reflectionTexture, !_disableShadows);
+                CrestRenderRequest.Render(_camReflections, _reflectionTexture, !_disableShadows, invertCulling: true);
                 // SubmitRenderRequest renders synchronously. Generate only after its
                 // final colour copy/resolve, never while the camera is still rendering.
                 // Skipped refresh frames retain the previous complete mip chain.
@@ -334,10 +336,12 @@ namespace Crest
             {
                 // Restore even if a render request throws.
                 if (waterRoot != null) waterRoot.SetActive(waterWasActive);
-                // Restore global settings.
-                GL.invertCulling = oldCulling;
-                if (_disableShadows) QualitySettings.shadows = oldShadowQuality;
-                if (_disablePixelLights) QualitySettings.pixelLightCount = oldPixelLightCount;
+                if (builtIn)
+                {
+                    GL.invertCulling = oldCulling;
+                    if (_disableShadows) QualitySettings.shadows = oldShadowQuality;
+                    if (_disablePixelLights) QualitySettings.pixelLightCount = oldPixelLightCount;
+                }
             }
 
 

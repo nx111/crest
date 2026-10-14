@@ -50,6 +50,8 @@ def main():
     production = "using System;\nusing UnityEngine;\nusing UnityEngine.Rendering;\nnamespace Crest { public partial class OceanRenderer {\n"
     production += "\n\n".join(methods) + "\n} public partial class LodTransform {\n"
     production += extract_method(read("crest/Assets/Crest/Crest/Scripts/LodData/LodTransform.cs"), "WriteCascadeParams") + "\n} }\n"
+    production += "namespace Crest.Internal { static class Extensions {\n"
+    production += extract_method(read("crest/Assets/Crest/Crest/Scripts/Helpers/Helpers.cs"), "SetKeyword") + "\n} }\n"
 
     common = (root / "tools/LodSimulationChecks/Program.cs").read_text(encoding="utf-8")
     # Share the managed API substitutes, without the fixed-step program entry.

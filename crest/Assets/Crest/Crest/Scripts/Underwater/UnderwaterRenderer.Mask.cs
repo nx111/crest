@@ -111,6 +111,11 @@ namespace Crest
         {
             ReleaseURPHandles();
             DisableOceanMaskKeywords();
+            // Published globals must not retain released textures when this camera stops rendering water.
+            Shader.SetGlobalTexture(ShaderIDs.s_CrestOceanMaskTexture, null);
+            Shader.SetGlobalTexture(ShaderIDs.s_CrestOceanMaskDepthTexture, null);
+            Shader.SetGlobalTexture(ShaderIDs.s_CrestWaterVolumeFrontFaceTexture, null);
+            Shader.SetGlobalTexture(ShaderIDs.s_CrestWaterVolumeBackFaceTexture, null);
             if (_maskRT != null) _maskRT.Release();
             if (_depthRT != null) _depthRT.Release();
             if (_volumeFrontFaceRT != null) _volumeFrontFaceRT.Release();
