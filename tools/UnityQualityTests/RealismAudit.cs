@@ -347,6 +347,12 @@ public static partial class QualityRunner
                 try
                 {
                     foreach (var target in targets) target.Create();
+                    Check(targets.All(target => target.IsCreated()), "Foam decay audit targets created: " + format);
+                    if (targets.Any(target => !target.IsCreated())) continue;
+                    var actualFormat = targets[0].graphicsFormat;
+                    var roundToHalf = actualFormat == UnityEngine.Experimental.Rendering.GraphicsFormat.R16_SFloat
+                        || actualFormat == UnityEngine.Experimental.Rendering.GraphicsFormat.R16G16_SFloat
+                        || actualFormat == UnityEngine.Experimental.Rendering.GraphicsFormat.R16G16B16A16_SFloat;
                     using (var command = new CommandBuffer())
                     {
                         command.SetComputeBufferParam(foam, kernel, "_CrestCascadeData", cascade);
@@ -368,6 +374,8 @@ public static partial class QualityRunner
                         {
                             command.SetComputeTextureParam(foam, kernel, "_LD_TexArray_Foam_Source", step == 0 ? (Texture)initial : targets[(step - 1) % 2]);
                             command.SetComputeTextureParam(foam, kernel, "_LD_TexArray_Target", targets[step % 2]);
+                            command.SetComputeIntParam(foam, "_CrestFoamStochasticRounding", roundToHalf ? 1 : 0);
+                            command.SetComputeIntParam(foam, "_CrestFoamRoundingStep", step + 1);
                             command.DispatchCompute(foam, kernel, size / 8, size / 8, 1);
                         }
                         Graphics.ExecuteCommandBuffer(command);
@@ -375,11 +383,31 @@ public static partial class QualityRunner
                     var readback = AsyncGPUReadback.Request(targets[(2 * frequency - 1) % 2], 0, TextureFormat.RFloat);
                     readback.WaitForCompletion();
                     Check(!readback.hasError, "Production foam kernel supports " + format + " readback at " + frequency + " Hz");
-                    var value = readback.GetData<float>()[size / 2 * size + size / 2];
-                    var relativeError = Mathf.Abs(value / Mathf.Exp(-0.8f * 2) - 1);
-                    Check(Finite(value) && (format != RenderTextureFormat.RFloat || relativeError < 0.001f),
-                        "Production foam decay is finite" + (format == RenderTextureFormat.RFloat ? " and accurate" : " (half-target accuracy measured separately)")
-                        + ", " + format + ", " + frequency + " Hz, 2 seconds: " + value + "; relative error " + relativeError);
+                    if (readback.hasError) continue;
+                    var data = readback.GetData<float>();
+                    double sum = 0;
+                    var finite = true;
+                    // Exclude the cascade boundary; individual stochastic texels
+                    // are not deterministic lifetime estimates.
+                    const int border = 2;
+                    const int sampleCount = (size - 2 * border) * (size - 2 * border);
+                    for (var y = border; y < size - border; y++)
+                    for (var x = border; x < size - border; x++)
+                    {
+                        var value = data[y * size + x];
+                        finite &= Finite(value);
+                        sum += value;
+                    }
+                    var mean = (float)(sum / sampleCount);
+                    var relativeError = Mathf.Abs(mean / Mathf.Exp(-1.6f) - 1);
+                    // Half ULP/value <= 2^-10 here. Per-step stochastic SD is at
+                    // most half an ULP. Six standard errors of the spatial mean
+                    // plus the existing 0.1% float32 budget is a diagnostic margin,
+                    // assuming decorrelated hashes, not a cross-device guarantee.
+                    var tolerance = 0.001f + (roundToHalf ? 6f * Mathf.Sqrt(2f * frequency / sampleCount) / 2048f : 0f);
+                    Check(finite && relativeError < tolerance,
+                        "Corrected foam decay spatial mean, " + format + ", " + frequency + " Hz, 2 seconds: " + mean
+                        + "; actual=" + actualFormat + "; samples=" + sampleCount + "; relative error=" + relativeError + "; tolerance=" + tolerance);
                 }
                 finally { foreach (var target in targets) { target.Release(); Object.DestroyImmediate(target); } }
             }

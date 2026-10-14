@@ -24,7 +24,45 @@ float _SimDeltaTimePrev;
 float _LODChange;
 bool _NeedsPrewarming;
 uint _CrestMinimumWavesSlice;
+bool _CrestFoamStochasticRounding;
+uint _CrestFoamRoundingStep;
 CBUFFER_END
+
+float CrestFoamRoundingNoise(uint3 id)
+{
+	uint hash = id.x * 0x8da6b343u ^ id.y * 0xd8163841u ^ id.z * 0xcb1ab31fu ^ _CrestFoamRoundingStep;
+	hash = (hash ^ (hash >> 16)) * 0x7feb352du;
+	hash = (hash ^ (hash >> 15)) * 0x846ca68bu;
+	hash = hash ^ (hash >> 16);
+	return float(hash >> 8) * (1.0 / 16777216.0);
+}
+
+float CrestFoamRoundToHalf(float foam, uint3 id)
+{
+	// Fixed dt is not a temporal seed. The manager advances the seed per real
+	// substep, including multiple steps in one frame. Do not dither reprojection.
+	if (!_CrestFoamStochasticRounding || _SimDeltaTime <= 0.0)
+	{
+		return foam;
+	}
+	uint bits = f32tof16(foam);
+	float lower = f16tof32(bits);
+	// f32tof16 may round up. Find the lower neighbour without assuming its mode.
+	if (lower > foam)
+	{
+		bits = bits - 1;
+		lower = f16tof32(bits);
+	}
+	if (lower == foam)
+	{
+		return foam;
+	}
+	const float upper = f16tof32(bits + 1);
+	// Adjacent encodings also give the correct subnormal spacing (2^-24).
+	// Store an exact half value so both RTZ and RNE UAV writes preserve it.
+	const float probability = (foam - lower) / (upper - lower);
+	return CrestFoamRoundingNoise(id) < probability ? upper : lower;
+}
 
 // Exact solution of d(foam)/dt = source - fadeRate * foam for a constant source
 // during one step. The small-exponent series avoids cancellation (and 0 / 0)
@@ -175,5 +213,7 @@ void UpdateFoam(uint3 id : SV_DispatchThreadID)
 	const float signedOceanDepth = _OceanCenterPosWorld.y - terrainHeight_seaLevelOffset.x + terrainHeight_seaLevelOffset.y + disp.y;
 	foam += _ShorelineFoamStrength * shoreSourceWeight * saturate(1.0 - signedOceanDepth / max(_ShorelineFoamMaxDepth, 0.0001));
 
-	_LD_TexArray_Target[id] = saturate(foam);
+	// Keep the existing simulation coverage clamp after decay and generation.
+	// Additive inputs can still deposit values above one after this dispatch.
+	_LD_TexArray_Target[id] = CrestFoamRoundToHalf(saturate(foam), id);
 }

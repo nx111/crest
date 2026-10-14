@@ -37,8 +37,11 @@ namespace Crest
         readonly int sp_NeedsPrewarming = Shader.PropertyToID("_NeedsPrewarming");
         readonly int sp_CrestMinimumWavesSlice = Shader.PropertyToID("_CrestMinimumWavesSlice");
         readonly int sp_CrestFoamInputScale = Shader.PropertyToID("_CrestFoamInputScale");
+        readonly int sp_CrestFoamStochasticRounding = Shader.PropertyToID("_CrestFoamStochasticRounding");
+        readonly int sp_CrestFoamRoundingStep = Shader.PropertyToID("_CrestFoamRoundingStep");
 
         float _inputTimeScale;
+        int _foamRoundingStep;
 
         public override SimSettingsBase SettingsBase => Settings;
         public SettingsType Settings => _ocean._simSettingsFoam != null ? _ocean._simSettingsFoam : GetDefaultSettings<SettingsType>();
@@ -65,6 +68,19 @@ namespace Crest
         protected override void SetAdditionalSimParams(IPropertyWrapper simMaterial)
         {
             base.SetAdditionalSimParams(simMaterial);
+
+            // Called once per dispatch, not once per frame. A zero-time step has
+            // zero input scale, so reprojection does not advance the random seed.
+            if (_inputTimeScale > 0f)
+            {
+                _foamRoundingStep = unchecked(_foamRoundingStep + 1);
+            }
+            simMaterial.SetInt(sp_CrestFoamRoundingStep, _foamRoundingStep);
+            // Use the allocated compatible format, including multi-channel fallbacks.
+            var format = CompatibleTextureFormat;
+            simMaterial.SetInt(sp_CrestFoamStochasticRounding,
+                format == GraphicsFormat.R16_SFloat || format == GraphicsFormat.R16G16_SFloat
+                || format == GraphicsFormat.R16G16B16A16_SFloat ? 1 : 0);
 
             // Prewarm simulation for first frame or teleporting. It will not be the same results as running the
             // simulation for multiple frames - but good enough.

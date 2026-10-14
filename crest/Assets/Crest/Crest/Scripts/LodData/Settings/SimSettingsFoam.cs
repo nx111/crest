@@ -47,7 +47,7 @@ namespace Crest
         public float _shorelineFoamStrength = 2f;
 
         [Header("Developer settings")]
-        [Tooltip("The render texture format used for foam history. R16_SFloat saves memory, but repeated storage rounding can change foam lifetime, especially at high simulation frequencies or low fade rates. R32_SFloat reduces this error while doubling the foam textures' storage; measure GPU cost on the target device before selecting it.")]
+        [Tooltip("The render texture format used for foam history. R16_SFloat saves memory and uses stochastic rounding per simulation step to avoid systematic lifetime drift from storage rounding. Individual texels still have half-precision noise. R32_SFloat reduces this noise while doubling the foam textures' storage; measure GPU cost on the target device before selecting it.")]
         public GraphicsFormat _renderTextureGraphicsFormat = GraphicsFormat.R16_SFloat;
         [Range(15f, 200f), Tooltip("Frequency to run the foam sim, in updates per second. Lower frequencies can be more efficient but may lead to visible jitter. Built-in additive foam inputs preserve their strength authored at the default 30 updates per second.")]
         public float _simulationFrequency = 30f;

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Characterize foam storage precision; this is a diagnostic, not a rendering fix.
+"""Characterize UNCORRECTED foam storage models and historical GPU readbacks.
 
 Read the actual decay helper, history multiplication and final store expression.
 Evaluate their isolated, no-source/no-flow case with binary32 assignment storage,
 then apply one of three texture-storage models: RFloat, RHalf round-toward-zero
 (RTZ), or a counterfactual RHalf round-to-nearest-even (RNE).
+Explicitly bypass CrestFoamRoundToHalf in current source. These comparisons do
+NOT characterize corrected production. check_foam_issue8_stochastic_rounding.py
+executes the production rounding helper; corrected GPU audits report spatial means.
 
 The RTZ model reproduces the published 2026-10-11 Windows D3D11/GTX 1650 results
 for commit 90a93293. It is not a forced or universal GPU rounding mode. The CPU
@@ -18,8 +21,9 @@ https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm
 https://docs.vulkan.org/spec/latest/chapters/fundamentals.html
   Floating-Point Format Conversions do not specify a universal rounding mode.
 
-Use --results <editor-results.txt> to check another copy of the same 0.8/s,
-initial-value-1, two-second GPU fixture. Use --ref to read earlier shader source.
+Use --results <editor-results.txt> only for the historical uncorrected 0.8/s,
+initial-value-1, two-second scalar GPU fixture. Corrected audit logs are rejected.
+Use --ref to read earlier shader source.
 """
 import argparse
 from decimal import Decimal
@@ -29,6 +33,7 @@ import re
 import struct
 import sys
 import unittest
+from unittest.mock import patch
 
 import check_foam_quality as source
 
@@ -79,7 +84,7 @@ class Binary32Values(dict):
         super().__setitem__(name, value)
 
 
-class FoamStorageModel:
+class UncorrectedFoamStorageModel:
     def __init__(self):
         compute = source.source(COMPUTE)
         self.integration = source.body(compute, "CrestFoamDecayAndSource")
@@ -88,6 +93,11 @@ class FoamStorageModel:
             raise AssertionError("Expected one foam-history decay assignment")
         self.update = updates[0]
         self.store = re.search(r"_LD_TexArray_Target\[id\]\s*=\s*([^;]+);", compute)[1]
+        # Retain the actual pre-rounding coverage expression, but deliberately
+        # exclude the stochastic correction from these historical models.
+        correction = re.fullmatch(r"CrestFoamRoundToHalf\((.*),\s*id\)", self.store)
+        if correction:
+            self.store = correction[1]
 
     def weights(self, dt, rate):
         # The decay path contains one multiply and exp followed by float storage.
@@ -109,6 +119,8 @@ class FoamStorageModel:
 def read_results(path):
     """Extract the eight scalar readbacks; do not infer unlogged GPU details."""
     text = Path(path).read_text(encoding="utf-8-sig")
+    if "Corrected foam decay spatial mean" in text:
+        raise ValueError("Corrected spatial-mean audits cannot validate historical uncorrected storage models")
     result = {"RFloat": {}, "RHalf": {}}
     pattern = r"Production foam decay[^\r\n]*?\b(RFloat|RHalf),\s*(\d+) Hz,\s*2 seconds:\s*([0-9.eE+\-]+);"
     for format_name, frequency, value in re.findall(pattern, text):
@@ -130,7 +142,15 @@ def printed_tolerance(decimal_text):
 class FoamStorageDiagnostics(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.model = FoamStorageModel()
+        cls.model = UncorrectedFoamStorageModel()
+
+    def test_historical_model_excludes_the_production_rounding_helper(self):
+        self.assertNotIn("CrestFoamRoundToHalf", self.model.store)
+
+    def test_corrected_gpu_audits_are_not_historical_scalar_results(self):
+        with patch.object(Path, "read_text", return_value="Corrected foam decay spatial mean, RHalf, 200 Hz"):
+            with self.assertRaisesRegex(ValueError, "historical uncorrected"):
+                read_results("unused")
 
     def test_float32_model_matches_recorded_windows_readbacks(self):
         for frequency, recorded in RECORDED["RFloat"].items():
@@ -198,25 +218,25 @@ class FoamStorageDiagnostics(unittest.TestCase):
 
 
 def print_characterization():
-    model = FoamStorageModel()
+    model = UncorrectedFoamStorageModel()
     expected = math.exp(-1.6)
-    print(f"Initial 1, fade 0.8/s, duration 2s; analytic result {expected:.12f}")
+    print(f"UNCORRECTED models: initial 1, fade 0.8/s, duration 2s; analytic result {expected:.12f}")
     print(" Hz | float32 result (error %) | half RTZ result (error %) | half RNE result (error %)")
     for frequency in FREQUENCIES:
         values = [model.run(frequency, storage=storage) for storage in STORAGE]
         print(f"{frequency:3d} | " + " | ".join(f"{value:.10f} ({100 * (value / expected - 1):+.6f})" for value in values))
     print("RNE is a counterfactual: fade 0.02/s at 200 Hz remains 1 after 2s; analytic 0.9607894392.")
-    print("PASS means the source/storage characterization matches its stated model and recorded fixture, not that RHalf lifetime is accurate.", flush=True)
+    print("PASS validates historical uncorrected models/fixtures, NOT corrected production. Run check_foam_issue8_stochastic_rounding.py for the production helper.", flush=True)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ref", help="Read shader source at a Git revision")
-    parser.add_argument("--results", type=Path, help="Read the same fixture's eight measurements from editor-results.txt")
+    parser.add_argument("--results", type=Path, help="Read the historical uncorrected fixture's eight scalar measurements")
     args, remaining = parser.parse_known_args()
     source.SOURCE_REF = args.ref
     if args.results:
         RECORDED = read_results(args.results)
-    print("Foam storage characterization: CPU source-expression and quantization models; no new Unity/GPU execution.")
+    print("Uncorrected foam storage diagnostics: stochastic correction deliberately bypassed; no new Unity/GPU execution.")
     print_characterization()
     unittest.main(argv=[sys.argv[0], *remaining])
