@@ -59,8 +59,9 @@ It does not include the commercial Crest URP package.
   continuation changes C# production code and has offline verification only.
 - **Headless Unity import, C# API binding, pipeline creation, example asset conversion
   and configuration validation passed locally on Unity 6000.6.2f1 / URP 17.6.0.**
-  This result predates the [document review follow-up](URP-DOCUMENT-REVIEW-FOLLOWUP.md),
-  whose Unity compilation is deferred until the other build finishes.
+  The [document review follow-up](URP-DOCUMENT-REVIEW-FOLLOWUP.md) also passed Unity
+  import, Editor C# compilation/API binding and pipeline configuration validation
+  for `8ccaa2662` on 2026-10-14, with exit code 0. Its GPU and device checks remain pending.
   The project includes the generated pipeline assets and converted example materials;
   see [static-check-results.md](static-check-results.md).
 - **The earlier `2aaeec77` D3D11 quality run passed on 2026-10-11 with 37 captured frames**: all seven

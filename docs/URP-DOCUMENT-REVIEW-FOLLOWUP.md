@@ -6,9 +6,10 @@ This change checks the eight findings in the user-supplied Gemini review against
 the current production code and the installed Unity 6000.6.2f1 / URP 17.6.0 sources.
 The review's sample patches are proposals; several descriptions do not match this
 baseline.
-Unity compilation is deferred at the user's request until the other Unity build
-finishes. The checks below are offline and do not establish GPU rendering quality
-or Android performance.
+After the other Unity build exited, Unity 6000.6.2f1 import, Editor C# compilation
+and API binding, and pipeline configuration validation passed for `8ccaa2662` on
+2026-10-14. The numerical checks below are offline; no new scene rendering audit,
+Player build or Android performance test was performed.
 
 ## Findings and changes
 
@@ -135,8 +136,50 @@ Unity API binding, native resources, Render Graph execution or device behavior.
 The actual foam shader has also passed offline D3D11 `cs_5_0` compilation with the
 pinned Unity headers.
 
-After the other build finishes, run Unity import/C# compilation and pipeline
-validation. GPU follow-up should cover actual shadow data, refracted transparent
+## Unity compilation and configuration validation
+
+The deferred check ran on 2026-10-14, from **15:07:35 to 15:12:38 (UTC+08)**,
+after the unrelated Unity build process had exited.
+The tested production commit was `8ccaa2662e9c56203a108f7521ad5cafd621d28b`.
+Unity **6000.6.2f1** loaded Core/URP **17.6.0** and used D3D11 on the local AMD
+Radeon Graphics adapter.
+
+```text
+Unity.exe -batchmode -quit -force-d3d11
+  -projectPath D:\Games\work\crest\crest
+  -executeMethod Crest.CrestURPSetup.ValidatePipeline
+  -logFile <new local evidence directory>/unity-compile.log
+```
+
+The actual Unity process was PID **19912**, and its final exit code was **0**.
+No replacement project main process remained after exit.
+The complete log contains the configuration success marker and Unity's successful
+shutdown marker, with **0 C# compilation errors**, **0 Shader error entries** and
+**0 logged exceptions**.
+The changed foam compute shader and transparent underwater shader were imported.
+This validates Editor compilation/API binding and the installed pipeline assets;
+it does not exercise Render Graph passes in a scene or compile every shader variant.
+
+Nonfatal diagnostics include the existing `FindObjectsSortMode`/`FindObjectsByType`
+deprecation warnings, Cinemachine's optional HDRP assembly-reference messages, and
+a `Curl error 42: Callback aborted` during successful shutdown.
+No production code fix was needed for this run.
+Unity's automatic serialization updates to three editor icon metadata files and
+PlayerSettings were saved as local patches and restored; the tracked checkout was
+clean before this documentation update.
+
+Local evidence is retained under
+`tmp/urp-review-compile-20261014-09e4b13cb5a742f7b4e0fb92a23f69b2/`:
+
+- [Complete Unity log](../tmp/urp-review-compile-20261014-09e4b13cb5a742f7b4e0fb92a23f69b2/unity-compile.log)
+- [Process, commit and acceptance record](../tmp/urp-review-compile-20261014-09e4b13cb5a742f7b4e0fb92a23f69b2/compile-record.json)
+- Git status before compilation and after cleanup, plus the automatic serialization patches.
+
+The complete log SHA-256 is
+`cd5fa6fd1f63753c8f846bb6b73910dd8f9123f2842387fad28d696caaeb72f3`.
+These local evidence files are not part of the repository's tracked documentation.
+
+GPU follow-up should cover actual shadow data, refracted transparent
 atmospheric fog, scene depth callbacks, Player overlay/mode transitions, mirrored
 cameras with shadows, and spatially averaged foam lifetime on D3D11 and Vulkan.
 Earlier device reports do not validate this patch.
