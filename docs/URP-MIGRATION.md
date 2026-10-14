@@ -59,6 +59,8 @@ It does not include the commercial Crest URP package.
   continuation changes C# production code and has offline verification only.
 - **Headless Unity import, C# API binding, pipeline creation, example asset conversion
   and configuration validation passed locally on Unity 6000.6.2f1 / URP 17.6.0.**
+  This result predates the [document review follow-up](URP-DOCUMENT-REVIEW-FOLLOWUP.md),
+  whose Unity compilation is deferred until the other build finishes.
   The project includes the generated pipeline assets and converted example materials;
   see [static-check-results.md](static-check-results.md).
 - **The earlier `2aaeec77` D3D11 quality run passed on 2026-10-11 with 37 captured frames**: all seven
@@ -99,7 +101,7 @@ a separate local compatibility test, not a tested configuration of this branch.
 | Reflection probes | World-position blending/box projection, the relevant shader variants and example asset settings; clustered probe atlas variant included. |
 | Camera requests | Planar reflection and depth-cache capture use `UniversalRenderPipeline.SingleCameraRequest`. Reflection cameras skip Crest's view-camera passes; water activation and culling state are restored in `finally`. |
 | Tile bindings | Water tiles bind their per-camera data explicitly; no dependency on `Camera.current` to update reflection textures. |
-| Examples | Surface Shaders and the gradient sky replaced with explicit URP passes; Standard/terrain materials and built-in default material references converted. The shared camera prefab includes URP camera data. Example custom camera commands now run after the water mask, before scene depth/opaques. Serialized BIRP `CameraEvent` values do not define URP execution order. |
+| Examples | Surface Shaders and the gradient sky replaced with explicit URP passes; Standard/terrain materials and built-in default material references converted. The shared camera prefab includes URP camera data. Supported custom camera events select offscreen preparation, after-prepass callbacks or scene depth changes after opaques; see the document review follow-up for the mapping. |
 | Project setup | URP package/assembly references, missing Splines dependency, stable metadata for new files, repeatable setup/validation menus. |
 
 The FFT/Gerstner generation and wave-query/buoyancy architecture is retained. Later
@@ -116,8 +118,8 @@ they do not require the built-in camera lighting or GrabPass pipeline.
 1. Fetch and switch to `urp`. Open the **`crest` subdirectory** as the Unity project
    using Unity 6000.6.2f1. Let package resolution/import finish and save the editor log.
 2. The example project already assigns `Assets/CrestURPSettings/CrestPipeline.asset`
-   to Graphics and all quality levels. It enables Depth/Opaque Texture, keeps opaque
-   color at full resolution, disables MSAA, and uses four shadow cascades over 150 units.
+   to Graphics and all quality levels. It enables Depth Texture and requests color
+   copies per camera through Crest's feature, disables MSAA, and uses four shadow cascades over 150 units.
    Probe blending/box projection, additional-light shadows and soft shadows are enabled;
    the per-object additional-light limit is eight. These quality options add GPU cost.
    **Crest > URP > Create and Assign Pipeline** can recreate the generated assets.

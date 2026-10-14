@@ -13,6 +13,15 @@ tightens process/log acceptance, production velocity checks and actual foam-form
 diagnostics. These later diagnostic edits have offline checks and need a new
 Unity/device run; they do not increase the archived GPU assertion counts.
 
+The [document review follow-up](../../docs/URP-DOCUMENT-REVIEW-FOLLOWUP.md) changes
+the production half-precision foam store. The Editor and Player foam fixtures now
+set the rounding flag from the allocated graphics format and advance the seed for
+every real simulation dispatch. Lifetime checks use the interior spatial mean,
+with a margin derived from half ULP variance and the existing float32 budget.
+These updated fixtures have syntax/offline checks only and need a new GPU run.
+`check_foam_storage.py --results` accepts historical uncorrected scalar logs; it
+rejects the new corrected spatial-mean logs.
+
 `-crestRealismAudit` enables `RealismAudit.cs`: selected RNM and per-phase foam HLSL
 contracts, FFT coordinate/time and Burst comparisons, production FFT loop/bake
 checks, foam-decay characterization and planar-reflection mip/resource recovery.
