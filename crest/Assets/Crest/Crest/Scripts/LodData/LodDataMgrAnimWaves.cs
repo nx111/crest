@@ -3,6 +3,7 @@
 // This file is subject to the MIT License as seen in the root of this folder structure (LICENSE)
 
 using System.Collections.Generic;
+using Crest.Internal;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
@@ -310,6 +311,10 @@ namespace Crest
             // combine waves
             for (int lodIdx = lodCount - 1; lodIdx >= 0; lodIdx--)
             {
+                // Subsystems can be created or destroyed without rebuilding these materials.
+                _combineMaterial[lodIdx].material.SetKeyword(LodDataMgrFlow.FLOW_KEYWORD, OceanRenderer.Instance._lodDataFlow != null);
+                _combineMaterial[lodIdx].material.SetKeyword(LodDataMgrDynWaves.DYNWAVES_KEYWORD, OceanRenderer.Instance._lodDataDynWaves != null);
+
                 // The per-octave wave buffers
                 BindWaveBuffer(_combineMaterial[lodIdx]);
 

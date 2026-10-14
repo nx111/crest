@@ -57,6 +57,7 @@ namespace Crest
         float _windSpeed;
         float _windTurbulence;
         float _windDirRad;
+        float _gravity;
         OceanWaveSpectrum _spectrum;
 
         float _generationTime = float.NaN;
@@ -89,6 +90,11 @@ namespace Crest
         }
 
         public FFTCompute(int resolution, float loopPeriod, float windSpeed, float windTurbulence, float windDirRad, OceanWaveSpectrum spectrum)
+            : this(resolution, loopPeriod, windSpeed, windTurbulence, windDirRad, spectrum, OceanRenderer.Instance.Gravity)
+        {
+        }
+
+        FFTCompute(int resolution, float loopPeriod, float windSpeed, float windTurbulence, float windDirRad, OceanWaveSpectrum spectrum, float gravity)
         {
             Debug.Assert(Mathf.NextPowerOfTwo(resolution) == resolution, "Crest: FFTCompute resolution must be power of 2");
 
@@ -97,6 +103,7 @@ namespace Crest
             _windSpeed = windSpeed;
             _windTurbulence = windTurbulence;
             _windDirRad = windDirRad;
+            _gravity = gravity;
             _spectrum = spectrum;
         }
 
@@ -219,20 +226,22 @@ namespace Crest
         // floats makes exchanging wind speed and turbulence produce the same key.
         readonly struct WaveConditions : System.IEquatable<WaveConditions>
         {
-            readonly int _resolution;
-            readonly float _loopPeriod;
-            readonly float _windTurbulence;
-            readonly float _windDirRad;
-            readonly float _windSpeed;
-            readonly OceanWaveSpectrum _spectrum;
+            public readonly int _resolution;
+            public readonly float _loopPeriod;
+            public readonly float _windTurbulence;
+            public readonly float _windDirRad;
+            public readonly float _windSpeed;
+            public readonly float _gravity;
+            public readonly OceanWaveSpectrum _spectrum;
 
-            public WaveConditions(int resolution, float loopPeriod, float windTurbulence, float windDirRad, float windSpeed, OceanWaveSpectrum spectrum)
+            public WaveConditions(int resolution, float loopPeriod, float windTurbulence, float windDirRad, float windSpeed, OceanWaveSpectrum spectrum, float gravity)
             {
                 _resolution = resolution;
                 _loopPeriod = loopPeriod;
                 _windTurbulence = windTurbulence;
                 _windDirRad = windDirRad;
                 _windSpeed = windSpeed;
+                _gravity = gravity;
                 _spectrum = spectrum;
             }
 
@@ -243,6 +252,7 @@ namespace Crest
                     && _windTurbulence.Equals(other._windTurbulence)
                     && _windDirRad.Equals(other._windDirRad)
                     && _windSpeed.Equals(other._windSpeed)
+                    && _gravity.Equals(other._gravity)
                     && ReferenceEquals(_spectrum, other._spectrum);
             }
 
@@ -257,6 +267,7 @@ namespace Crest
                     hash = hash * 397 ^ _windTurbulence.GetHashCode();
                     hash = hash * 397 ^ _windDirRad.GetHashCode();
                     hash = hash * 397 ^ _windSpeed.GetHashCode();
+                    hash = hash * 397 ^ _gravity.GetHashCode();
                     // Managed identity stays stable even after Unity destroys the
                     // spectrum's native object. Do not use Unity's null operator.
                     hash = hash * 397 ^ (ReferenceEquals(_spectrum, null) ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_spectrum));
@@ -279,12 +290,18 @@ namespace Crest
         public static RenderTexture GenerateDisplacements(CommandBuffer buf, int resolution, float loopPeriod, float windTurbulence, float windDirRad, float windSpeed, float time, OceanWaveSpectrum spectrum, bool updateSpectrum)
         {
             // All static data arguments belong in the key and generator constructor.
-            var conditions = new WaveConditions(resolution, loopPeriod, windTurbulence, windDirRad, windSpeed, spectrum);
+            var gravity = OceanRenderer.Instance.Gravity;
+            var conditions = new WaveConditions(resolution, loopPeriod, windTurbulence, windDirRad, windSpeed, spectrum, gravity);
             if (!_generators.TryGetValue(conditions, out var generator))
             {
-                // No generator for these params - create one
-                generator = new FFTCompute(resolution, loopPeriod, windSpeed, windTurbulence, windDirRad, spectrum);
-                _generators.Add(conditions, generator);
+                // Gravity changes do not trigger ShapeFFT's wind/spectrum notification.
+                // Reuse idle storage here too, without rewriting this frame's outputs.
+                generator = TryReuseGenerator(conditions, conditions);
+                if (generator == null)
+                {
+                    generator = new FFTCompute(resolution, loopPeriod, windSpeed, windTurbulence, windDirRad, spectrum, gravity);
+                    _generators.Add(conditions, generator);
+                }
             }
 
             generator._lastUsedFrame = OceanRenderer.FrameCount;
@@ -344,8 +361,9 @@ namespace Crest
             float windTurbulenceOld, float windDirRadOld, float windSpeedOld, OceanWaveSpectrum spectrumOld,
             float windTurbulenceNew, float windDirRadNew, float windSpeedNew, OceanWaveSpectrum spectrumNew)
         {
-            var oldConditions = new WaveConditions(resolution, loopPeriod, windTurbulenceOld, windDirRadOld, windSpeedOld, spectrumOld);
-            var newConditions = new WaveConditions(resolution, loopPeriod, windTurbulenceNew, windDirRadNew, windSpeedNew, spectrumNew);
+            var gravity = OceanRenderer.Instance.Gravity;
+            var oldConditions = new WaveConditions(resolution, loopPeriod, windTurbulenceOld, windDirRadOld, windSpeedOld, spectrumOld, gravity);
+            var newConditions = new WaveConditions(resolution, loopPeriod, windTurbulenceNew, windDirRadNew, windSpeedNew, spectrumNew, gravity);
             if (oldConditions.Equals(newConditions) || _generators.ContainsKey(newConditions))
             {
                 // Keep ownership of the old generator: other shapes or recorded
@@ -353,6 +371,11 @@ namespace Crest
                 return;
             }
 
+            TryReuseGenerator(oldConditions, newConditions);
+        }
+
+        static FFTCompute TryReuseGenerator(WaveConditions oldConditions, WaveConditions newConditions)
+        {
             var reusableConditions = oldConditions;
             if (!_generators.TryGetValue(oldConditions, out var generator) || generator._lastUsedFrame == OceanRenderer.FrameCount)
             {
@@ -364,7 +387,7 @@ namespace Crest
                 {
                     var candidate = entry.Value;
                     if (candidate._lastUsedFrame != OceanRenderer.FrameCount
-                        && candidate._resolution == resolution && candidate._loopPeriod.Equals(loopPeriod))
+                        && candidate._resolution == newConditions._resolution && candidate._loopPeriod.Equals(newConditions._loopPeriod))
                     {
                         reusableConditions = entry.Key;
                         generator = candidate;
@@ -379,13 +402,16 @@ namespace Crest
                 // already used this frame would also change an earlier shape's
                 // material texture before its draw. Only reuse an idle generator.
                 _generators.Remove(reusableConditions);
-                generator._windTurbulence = windTurbulenceNew;
-                generator._windDirRad = windDirRadNew;
-                generator._windSpeed = windSpeedNew;
-                generator._spectrum = spectrumNew;
+                generator._windTurbulence = newConditions._windTurbulence;
+                generator._windDirRad = newConditions._windDirRad;
+                generator._windSpeed = newConditions._windSpeed;
+                generator._gravity = newConditions._gravity;
+                generator._spectrum = newConditions._spectrum;
                 generator._spectrumInitialised = false;
                 _generators.Add(newConditions, generator);
             }
+
+            return generator;
         }
 
         /// <summary>
@@ -453,7 +479,7 @@ namespace Crest
             buf.SetComputeIntParam(_shaderSpectrum, ShaderIDs.s_Size, _resolution);
             buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_WindSpeed, _windSpeed);
             buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Turbulence, _windTurbulence);
-            buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Gravity, OceanRenderer.Instance.Gravity);
+            buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Gravity, _gravity);
             buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Period, _loopPeriod);
             buf.SetComputeVectorParam(_shaderSpectrum, ShaderIDs.s_WindDir, new Vector2(Mathf.Cos(_windDirRad), Mathf.Sin(_windDirRad)));
             buf.SetComputeTextureParam(_shaderSpectrum, _kernelSpectrumInit, ShaderIDs.s_SpectrumControls, _texSpectrumControls);
@@ -466,9 +492,10 @@ namespace Crest
         /// </summary>
         void UpdateSpectrum(CommandBuffer buf, float time)
         {
-            // Always set _Size as the compute shader returned from Resource.Load is the same asset every time and more
-            // than one ShapeFFT will overwrite this value.
+            // Rebind shared shader parameters: another generator may have used
+            // a different resolution or gravity since this spectrum was initialized.
             buf.SetComputeIntParam(_shaderSpectrum, ShaderIDs.s_Size, _resolution);
+            buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Gravity, _gravity);
             var timeScale = _spectrum._gravityScale;
             buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Time, time * timeScale);
             buf.SetComputeFloatParam(_shaderSpectrum, ShaderIDs.s_Chop, _spectrum._chop);
@@ -511,7 +538,7 @@ namespace Crest
 
         public static void OnGUI(int resolution, float loopPeriod, float windTurbulence, float windDirRad, float windSpeed, OceanWaveSpectrum spectrum)
         {
-            _generators.TryGetValue(new WaveConditions(resolution, loopPeriod, windTurbulence, windDirRad, windSpeed, spectrum), out var generator);
+            _generators.TryGetValue(new WaveConditions(resolution, loopPeriod, windTurbulence, windDirRad, windSpeed, spectrum, OceanRenderer.Instance.Gravity), out var generator);
             generator?.OnGUIInternal();
         }
 
